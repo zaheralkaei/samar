@@ -37,13 +37,23 @@ with open(config_path, 'r') as f:
     lm_config = json.load(f)
 
 lm = SamarTransformer(**lm_config)
-lm.load_state_dict(torch.load(lm_ckpt, map_location=device))
+# Use from_pretrained: handles checkpoint/model mismatches (e.g. description_embedding
+# and pos_embedding were added after the checkpoint was saved) by loading with
+# strict=False and warm-starting missing embeddings from existing weights.
+lm, _load_report = SamarTransformer.from_pretrained(lm_ckpt, config=lm_config, device=str(device))
+if _load_report["missing"]:
+    print(f"[load] warm-started missing layers: {_load_report['missing']}")
+if _load_report["unexpected"]:
+    print(f"[load] ignored unexpected keys: {_load_report['unexpected']}")
 lm.to(device).eval()
 
 # === Load latent from dataset ===
 latent_data = torch.load("latents/latents.pt")
 sample = latent_data[15]  # Pick an example with useful structure
 seed_latent = sample["latent"].unsqueeze(0).to(device)
+# Model expects [B, T, latent_dim]; a single latent vector broadcasts across T
+if seed_latent.dim() == 2:
+    seed_latent = seed_latent.unsqueeze(1)
 print(f"Using latent from file: {sample['file']}")
 
 # === Sample token sequence from Transformer ===

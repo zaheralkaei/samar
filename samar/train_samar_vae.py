@@ -17,7 +17,7 @@ from .dataset import get_samar_dataloader
 from .models.samar_vae import SamarVQVAE
 
 # CONFIG
-DATA_DIR = "./xml_data"
+DATA_DIR = "./data/xml"
 BATCH_SIZE = 16
 CONTEXT_SIZE = 256
 MAX_EPOCHS = 10

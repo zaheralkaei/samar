@@ -9,8 +9,11 @@ Created on Tue May 20 15:05:57 2025
 
 # test_full_roundtrip.py
 
-from core import SAMARInputRepresentation
-from reconstructor import reconstruct_musicxml_from_events
+import os
+from samar.core import SAMARInputRepresentation
+from samar.reconstructor import reconstruct_musicxml_from_events
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
 
 def save_remi_to_text(events, output_path):
     with open(output_path, "w", encoding="utf-8") as f:
@@ -25,10 +28,11 @@ def load_remi_from_text(path):
     return events
 
 def main():
-    # Step 1: Set paths
-    input_xml = "1.xml"
-    remi_txt = "1.txt"
-    output_xml = "1re.xml"
+    # Step 1: Set paths (relative to this test file's fixtures dir)
+    data_dir = os.path.join(_HERE, "data")
+    input_xml = os.path.join(data_dir, "1.xml")
+    remi_txt = os.path.join(data_dir, "1.txt")
+    output_xml = os.path.join(data_dir, "1re.xml")
 
     # Step 2: Parse MusicXML into REMI+24 events
     print(f"\n🔍 Parsing MusicXML: {input_xml}")

@@ -47,9 +47,11 @@ class SAMARDataset(Dataset):
     def __init__(self, data_dir, context_size=256, max_files=-1, min_chunk_len=8, tokenizer=None):
         self.data_dir = data_dir
         self.context_size = context_size
-        self.tokenizer = SamarTokenizer()
         self.min_chunk_len = min_chunk_len
-        self.tokenizer = tokenizer 
+        # If a tokenizer is provided use it directly; otherwise fall back to the
+        # lazy ``get_tokenizer()`` helper which loads the default vocab pickle
+        # (legacy samar_vocab.pkl living next to this module).
+        self.tokenizer = tokenizer if tokenizer is not None else get_tokenizer()
 
         # Load all .xml files recursively from the given data directory
         print(f"Loading XML files from: {data_dir}")

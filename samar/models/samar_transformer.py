@@ -109,3 +109,40 @@ class SamarTransformer(nn.Module):
             "latent_dim": self.latent_dim,
             "max_len": self.max_len
         }
+
+    @classmethod
+    def from_pretrained(cls, ckpt_path, config=None, device="cpu", warm_start_missing=True):
+        """Load a SamarTransformer from a checkpoint.
+
+        The checkpoint may pre-date later additions to the architecture (e.g.
+        ``description_embedding`` and ``pos_embedding`` were added after the
+        initial training run). We load with ``strict=False`` and, by default,
+        warm-start any missing embedding from ``token_embedding`` so the model
+        produces sensible outputs without retraining.
+        """
+        import torch as _torch
+        sd = _torch.load(ckpt_path, map_location=device, weights_only=False)
+        if isinstance(sd, dict) and "state_dict" in sd:
+            sd = sd["state_dict"]
+        if config is None:
+            cfg_keys = ["d_model", "n_head", "num_layers", "dim_feedforward",
+                        "dropout", "vocab_size", "latent_dim"]
+            config = {k: sd.get(k) or None for k in cfg_keys}
+            config = {k: v for k, v in config.items() if v is not None}
+        model = cls(**config)
+        missing, unexpected = model.load_state_dict(sd, strict=False)
+        if warm_start_missing and missing:
+            with _torch.no_grad():
+                for name in missing:
+                    if name == "description_embedding.weight" and hasattr(model, "token_embedding"):
+                        model.description_embedding.weight.copy_(model.token_embedding.weight)
+                    elif name == "pos_embedding.weight":
+                        # Sinusoidal positional init (Vaswani et al. 2017)
+                        max_len, d = model.pos_embedding.weight.shape
+                        pe = _torch.zeros(max_len, d)
+                        pos = _torch.arange(0, max_len, dtype=_torch.float).unsqueeze(1)
+                        div = _torch.exp(_torch.arange(0, d, 2).float() * (-_torch.log(_torch.tensor(10000.0)) / d))
+                        pe[:, 0::2] = _torch.sin(pos * div)
+                        pe[:, 1::2] = _torch.cos(pos * div)
+                        model.pos_embedding.weight.copy_(pe)
+        return model.to(device), {"missing": missing, "unexpected": unexpected}

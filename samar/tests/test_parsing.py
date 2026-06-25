@@ -10,13 +10,16 @@ Created on Sat May 10 02:35:35 2025
 
 import os
 import traceback
-from parser import MusicXMLParser
-from input_representation import SAMARInputRepresentation
-from tokenizer import SamarTokenizer
+# Resolve test fixtures relative to this file so the test runs from any CWD.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+TEST_FOLDER = os.path.join(_HERE, "data")
+VOCAB_PATH = os.path.join(os.path.dirname(_HERE), "samar_vocab.pkl")
 
-# Path to your test XML folder
-TEST_FOLDER = "./test_data"
-VOCAB_PATH = "samar_vocab.pkl"
+# Use package-relative imports so this works whether run via ``python -m``
+# or pytest with the project root on sys.path.
+from samar.parser import MusicXMLParser
+from samar.input_representation import SAMARInputRepresentation
+from samar.tokenizer import SamarTokenizer
 
 # Load tokenizer
 try:

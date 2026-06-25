@@ -22,7 +22,7 @@ tokenizer = SamarTokenizer.load(os.path.join(os.path.dirname(__file__), "samar_v
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # Use GPU if available
 CONTEXT_SIZE = 256  # Token sequence length
 BATCH_SIZE = 2  # Batch size for DataLoader
-XML_DATA_DIR = "./xml_data"  # Path to MusicXML files
+XML_DATA_DIR = "./data/xml"  # Path to MusicXML files (relative to project root)
 CHECKPOINT_PATH = "./checkpoints/samar_vae.pt"  # Path to pre-trained VAE model
 LATENT_SAVE_PATH = "./latents/latents.pt"  # Output file for saved latent representations
 

@@ -5,7 +5,10 @@ Created on Tue May 20 18:27:39 2025
 @author: zaher
 """
 
-from reconstructor import reconstruct_musicxml_from_events
+import os
+from samar.reconstructor import reconstruct_musicxml_from_events
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
 
 def load_remi_from_text(path):
     with open(path, "r", encoding="utf-8") as f:
@@ -14,9 +17,10 @@ def load_remi_from_text(path):
     return events
 
 def main():
-    # Step 1: Set paths
-    remi_txt = "desert_echoes_structured.txt"
-    output_xml = "desert_echoes_structured.xml"
+    # Step 1: Set paths (fixture file kept in tests/data/)
+    data_dir = os.path.join(_HERE, "data")
+    remi_txt = os.path.join(data_dir, "1.txt")
+    output_xml = os.path.join(data_dir, "desert_echoes_structured.xml")
 
     # Step 2: Load REMI+24 events from text
     remi_events = load_remi_from_text(remi_txt)

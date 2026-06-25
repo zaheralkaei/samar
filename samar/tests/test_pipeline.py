@@ -8,16 +8,17 @@ import os
 import xml.etree.ElementTree as ET
 import torch
 from glob import glob
-from tokenizer import SamarTokenizer
-from input_representation import SAMARInputRepresentation
-from reconstructor import reconstruct_musicxml_from_events
-from dataset import SAMARDataset
-from models.samar_vae import SamarVQVAE
-from models.samar_transformer import SamarTransformer
+from samar.tokenizer import SamarTokenizer
+from samar.input_representation import SAMARInputRepresentation
+from samar.reconstructor import reconstruct_musicxml_from_events
+from samar.dataset import SAMARDataset
+from samar.models.samar_vae import SamarVQVAE
+from samar.models.samar_transformer import SamarTransformer
 
 # === CONFIG ===
-TEST_XML_PATH = "test_data/sample.xml"
-TOKENIZER_PATH = "samar_vocab.pkl"
+_HERE = os.path.dirname(os.path.abspath(__file__))
+TEST_XML_PATH = os.path.join(_HERE, "data", "sample.xml")
+TOKENIZER_PATH = os.path.join(os.path.dirname(_HERE), "samar_vocab.pkl")
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def print_header(title):
@@ -55,7 +56,7 @@ def test_reconstruction():
         print("❌ No events extracted from input file.")
         return
 
-    out_path = "test_data/reconstructed.xml"
+    out_path = os.path.join(_HERE, "data", "reconstructed.xml")
     reconstruct_musicxml_from_events(events, out_path)
     print("✅ Reconstructed XML from events saved to:", out_path)
 
@@ -71,12 +72,12 @@ def test_reconstruction():
 
 def test_dataset():
     print_header("Dataset Loading & Chunking")
-    files = [f for f in glob("test_data/*.xml") if "reconstructed" not in f.lower()]
+    files = [f for f in glob(os.path.join(_HERE, "data", "*.xml")) if "reconstructed" not in os.path.basename(f).lower()]
     if not files:
         print("❌ No original MusicXML files found.")
         return
 
-    dataset = SAMARDataset(data_dir="test_data", max_files=1, context_size=32)
+    dataset = SAMARDataset(data_dir=os.path.join(_HERE, "data"), max_files=1, context_size=32)
     if len(dataset) == 0:
         print("❌ Dataset returned no token chunks. Check your XML content.")
         return
@@ -90,7 +91,7 @@ def test_dataset():
 def test_vae():
     print_header("VAE Encode-Decode Check")
     tokenizer = SamarTokenizer.load(TOKENIZER_PATH)
-    dataset = SAMARDataset(data_dir="test_data", max_files=1, context_size=32)
+    dataset = SAMARDataset(data_dir=os.path.join(_HERE, "data"), max_files=1, context_size=32)
     if len(dataset) == 0:
         print("❌ Skipping VAE test: No dataset samples found.")
         return
@@ -110,7 +111,7 @@ def test_vae():
 def test_transformer():
     print_header("Transformer Forward Pass with Metadata")
     tokenizer = SamarTokenizer.load(TOKENIZER_PATH)
-    dataset = SAMARDataset(data_dir="test_data", max_files=1, context_size=32)
+    dataset = SAMARDataset(data_dir=os.path.join(_HERE, "data"), max_files=1, context_size=32)
     if len(dataset) == 0:
         print("❌ Skipping Transformer test: No dataset samples found.")
         return
