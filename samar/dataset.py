@@ -54,13 +54,19 @@ class SAMARDataset(Dataset):
         # (legacy samar_vocab.pkl living next to this module).
         self.tokenizer = tokenizer if tokenizer is not None else get_tokenizer()
 
-        # Load all .xml files recursively from the given data directory
-        print(f"Loading XML files from: {data_dir}")
-        self.files = sorted(glob.glob(os.path.join(data_dir, "**/*.xml"), recursive=True))
+        # Load all .xml AND .mxl files recursively from the given data
+        # directory. ``.mxl`` is the standard MusicXML 4.0 compressed
+        # format (zip container) -- parsing is handled transparently
+        # by ``MusicXMLParser._parse_xml_root``. Round-4 audit fix.
+        print(f"Loading MusicXML files from: {data_dir}")
+        xml_files = sorted(glob.glob(os.path.join(data_dir, "**/*.xml"), recursive=True))
+        mxl_files = sorted(glob.glob(os.path.join(data_dir, "**/*.mxl"), recursive=True))
+        self.files = xml_files + mxl_files
         if max_files > 0:
             self.files = self.files[:max_files]
 
-        print(f"Found {len(self.files)} MusicXML files")
+        print(f"Found {len(self.files)} MusicXML files "
+              f"({len(xml_files)} .xml + {len(mxl_files)} .mxl)")
         self.examples = []
         for file in self.files:
             try:
