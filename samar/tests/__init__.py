@@ -1,1 +1,1 @@
-
+"""Smoke tests for the SAMAR package (parser, tokenization, reconstruction)."""

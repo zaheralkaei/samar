@@ -1,0 +1,151 @@
+# SAMAR Audit — 2026-06-25 Round 2
+
+This document captures the second-round audit, conducted immediately after
+the round-1 audit (see `docs/audit-2026-06-25.md`). Round 1 verified
+description-token `<unk>` ratio = 0% but **never checked event-token
+`<unk>` ratio**. Round 2 ran the four "vocab-triangle" probes
+(`references/vocab-checkpoint-triangle.md` in the codebase-audit skill)
+on real training data and found the pipeline had been producing
+~30% `<unk>` events throughout.
+
+All 5 critical bugs were fixed in one commit (the next commit after
+`6d15b00`). Medium and low fixes landed in the same commit.
+
+## Root cause: where per-bar stats live (FIGARO pattern)
+
+The single architectural drift behind all 5 critical findings: SAMAR
+emitted per-bar statistics (`MeanPitch`, `MeanVelocity`, `MeanDuration`,
+`NoteDensity`) in the **event stream**, where `SamarVocab` has no slots
+for them. FIGARO emits them in the **description stream**, where
+`DescriptionVocab` has the slots. SAMAR also emitted `KeySignature_*`
+in the event stream, which FIGARO never emits. And the pitch vocab only
+covered 6 octaves (`range(24 * 6)`) when Arabic music lives in 10.5
+octaves (`range(24 * 11)`).
+
+Once the per-bar stats moved to the description stream (FIGARO pattern)
+and the pitch range was extended, three out of five findings
+disappeared automatically.
+
+## Critical bugs (fixed)
+
+### A1 Event stream has 30% `<unk>` on real training data
+
+**WHAT**: Running `SAMARDataset` over `./data/xml/` produces events where
+~30% (683/2266 on the sample file, 24.9% across the 529 pre-computed
+latents) are `<unk>`. The trained checkpoint has been learning from a
+corpus where 1 in 4 tokens is unknown.
+
+**VERIFIED**:
+  - `samar/tests/data/sample.xml` → 30.1% `<unk>` in event stream (was)
+  - `latents/latents.pt` → 24.9% `<unk>` across 529 samples (was)
+  - Same files post-fix → 0.0% `<unk>` in event stream
+
+**FIX**: All three token-class bugs below (A2/A3/A4) collapse this to 0%.
+
+### A2 Per-bar statistics emitted in event stream are not in event vocab
+
+**WHAT**: `core.py:_build_remi_events` emitted `NoteDensity_*`,
+`MeanPitch_*`, `MeanVelocity_*`, `MeanDuration_*` tokens per bar. These
+only exist in `DescriptionVocab`, not in `SamarVocab`. Result: ~30% of
+event-stream tokens were `<unk>`.
+
+**WHERE**: `samar/core.py:_build_remi_events` (pre-fix).
+
+**FIX**: Per-bar statistics now live in `_build_description_tokens()` (one
+emission per bar). `_build_remi_events()` emits only `Position`,
+`Pitch_24EDO`, `Velocity`, `Duration`, `Instrument`, plus a global
+`Tempo`. Matches FIGARO's `InputRepresentation.get_description()` +
+`get_event_seq()` split exactly.
+
+### A3 Pitch vocab covers 6 octaves; Arabic music uses 10.5
+
+**WHAT**: `samar/vocab.py:Tokens.get_midi_tokens_samar` used
+`range(24 * 6) = range(144)` for pitch tokens, covering MIDI 0..71 only.
+Most Arabic vocal music uses MIDI 60..96 (24-EDO 120..192), all of which
+became `<unk>`.
+
+**FIX**: Changed to `range(24 * 11) = range(264)`, covering MIDI 0..127.
+The vocab pickle is regenerated (was 1129 tokens, now 1249). The
+existing checkpoint's `token_embedding.weight` shape `[1129, 256]`
+becomes a mismatch with the new vocab size 1249; `from_pretrained()`
+handles this with `strict=False` (warm-start keeps the first 1129
+rows of the checkpoint, the remaining 120 rows are random init).
+
+### A4 Instrument vocab has named instruments; parser emits generic `Part_N`
+
+**WHAT**: `core.py:MusicXMLParser.parse_notes` used `<part-name>` text
+as the instrument name. Many `Arabic_Music_Dataset` MuseScore files have
+`<part-name>Part_1</part-name>` as a placeholder. The vocab has
+`Instrument_Violin`, `Instrument_Voice`, etc. but no `Instrument_Part_1`,
+so every note was `<unk>`.
+
+**FIX**: Added `DEFAULT_INSTRUMENT = 'Voice'` constant. The parser
+checks if the `<part-name>` is missing or starts with `Part_` (case-
+insensitive) and falls back to `Voice`. `Instrument_Voice` already
+exists in both `SamarVocab` and `DescriptionVocab`.
+
+### A5 `KeySignature_*` tokens emitted but not in any vocab
+
+**WHAT**: `core.py:_build_remi_events` emitted `KeySignature_{N}`
+tokens. Neither vocab had any `KeySignature_*` slots. Result: every key
+signature in every file was `<unk>`.
+
+**FIX**: Removed the `Event(KEY_SIGNATURE_KEY, ...)` emission. FIGARO
+has `KEY_SIGNATURE_KEY` in its constants but never emits it either
+(`figaro/src/input_representation.py`).
+
+## Drift and dead code (fixed)
+
+* **M1 README drift section incomplete** — replaced the 2-bullet list
+  with a 12-row alignment table (every FIGARO decision, matched or
+  documented why it diverges).
+* **M2 `<this commit hash>` placeholder** — replaced with `6d15b00`.
+* **M3 Empty `__init__.py` files** — added docstring + version to
+  `samar/models/__init__.py` and `samar/tests/__init__.py`.
+
+## Cleanup (fixed)
+
+* **L1 `generated.xml` / `generated_events.txt` in working tree** —
+  left in place (regenerated by `python -m samar.generating`); the
+  `.gitignore` already excludes them. Listed as a known artifact in the
+  README's "Known limitations" section.
+* **L2 `from_pretrained` config fallback undocumented** — added a
+  docstring section explaining the order: checkpoint `config` dict
+  overrides module-level defaults, then caller-supplied `overrides=`
+  win over both.
+* **L3 README "Known limitations" section** — added. Documents that
+  the bundled checkpoint predates round-2 fixes and needs retraining.
+* **L4 `latents/latents.pt` is stale** — documented; recompute via
+  `python -m samar.precompute_samar_latents` after retraining.
+
+## What's still good from round 1
+
+* Vocabulary pickle + checkpoint + `SamarVocab` alignment (round 1
+  made all three match at 1129 tokens; round 2 extended to 1249 and
+  regenerated the pickle, so all three still match).
+* Description-token `<unk>` ratio = 0% on real data.
+* All 5 smoke tests still pass.
+* Per-bar time signatures correctly parsed (`core._parse_time_signatures_by_bar`).
+* FIGARO-style two-vocab split intact.
+* `from_pretrained` warm-start works.
+
+## Verification
+
+```
+Event stream <unk> ratio (real data):     0.00% (was 30%)
+Description stream <unk> ratio:           0.00%
+VAE logits shape:                         [B, T, 1249]  (matches new vocab)
+Round-trip XML -> events -> XML:          works (388 notes reconstructed)
+All 5 smoke tests:                        pass
+```
+
+## Deferred (out of scope)
+
+* Per-note velocity from MusicXML — would require switching from XML to
+  MIDI input. Documented in the README drift table.
+* Retraining the transformer on the corrected pipeline — the bundled
+  checkpoint is now functionally usable as a starting point but still
+  has stale weights. Documented in "Known limitations."
+* Description-conditional generation — `sample()` accepts `description=`
+  but `generating.py` doesn't pass one. Requires retraining with
+  description conditioning.

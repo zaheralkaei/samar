@@ -136,6 +136,20 @@ class SamarTransformer(nn.Module):
         initial training run). We load with ``strict=False`` and, by default,
         warm-start any missing embedding from ``token_embedding`` so the model
         produces sensible outputs without retraining.
+
+        Configuration resolution order (audit round-2 finding L2):
+          1. ``config`` argument (caller-supplied overrides)
+          2. ``config`` dict inside the checkpoint file (top-level key)
+          3. Inferred from the checkpoint's ``state_dict`` shapes (only
+             the keys it can derive)
+
+        Whichever value is set last wins. This means a caller passing
+        ``config={"vocab_size": 1249}`` to load the round-2 checkpoint
+        (whose ``state_dict`` was trained with vocab_size=1129) gets the
+        1249-row model and the first 1129 rows of the checkpoint's
+        ``token_embedding`` are loaded; rows 1129..1248 are random init.
+        That's the FIGARO-style "vocab extension" pattern -- extending
+        the vocabulary without retraining the original rows.
         """
         import torch as _torch
         sd = _torch.load(ckpt_path, map_location=device, weights_only=False)
@@ -147,6 +161,26 @@ class SamarTransformer(nn.Module):
             config = {k: sd.get(k) or None for k in cfg_keys}
             config = {k: v for k, v in config.items() if v is not None}
         model = cls(**config)
+
+        # Handle vocab extension: the model's ``vocab_size`` may be larger
+        # than the checkpoint's. Resize the checkpoint's token/description
+        # embeddings to match (new rows are zero-init -- the user should
+        # retrain the model before relying on the new rows). See
+        # ``docs/audit-round-2.md`` finding A3.
+        ckpt_vocab_size = sd["token_embedding.weight"].shape[0]
+        if ckpt_vocab_size != config.get("vocab_size"):
+            new_size = config["vocab_size"]
+            old_emb = sd["token_embedding.weight"]
+            extended = _torch.zeros(new_size, old_emb.shape[1], dtype=old_emb.dtype)
+            extended[:ckpt_vocab_size] = old_emb
+            sd["token_embedding.weight"] = extended
+            # If the description embedding has the same shape, extend it too.
+            if "description_embedding.weight" in sd and sd["description_embedding.weight"].shape[0] == ckpt_vocab_size:
+                old_desc = sd["description_embedding.weight"]
+                ext_desc = _torch.zeros(new_size, old_desc.shape[1], dtype=old_desc.dtype)
+                ext_desc[:ckpt_vocab_size] = old_desc
+                sd["description_embedding.weight"] = ext_desc
+
         missing, unexpected = model.load_state_dict(sd, strict=False)
         if warm_start_missing and missing:
             with _torch.no_grad():

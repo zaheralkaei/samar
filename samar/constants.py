@@ -60,3 +60,10 @@ NOTE_DENSITY_KEY = 'NoteDensity'
 MEAN_PITCH_KEY = 'MeanPitch'
 MEAN_VELOCITY_KEY = 'MeanVelocity'
 MEAN_DURATION_KEY = 'MeanDuration'
+
+# === Misc ===
+# Default instrument label when a ``<part>`` doesn't carry a ``<part-name>``.
+# Maps to the existing ``Instrument_Voice`` token in
+# ``SamarVocab`` / ``DescriptionVocab`` (no new vocab entries needed).
+# Audit round-2 finding A4.
+DEFAULT_INSTRUMENT = 'Voice'

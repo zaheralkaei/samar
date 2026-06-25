@@ -63,16 +63,23 @@ class SAMARDataset(Dataset):
         self.examples = []
         for file in self.files:
             try:
-                # Convert XML file into a sequence of events, then tokenize
+                # Convert XML file into two separate streams (FIGARO pattern):
+                #   events         -- per-note tokens, encoded by SamarTokenizer
+                #   description    -- per-bar statistics, encoded by DescriptionTokenizer
+                # Earlier versions concatenated both and tokenized with the event
+                # tokenizer, which made every description token collapse to <unk>
+                # because the event vocab has no slot for MeanPitch_*/NoteDensity_*/
+                # etc. (audit round-2 finding A1/A2).
                 ir = SAMARInputRepresentation(file)
-                events = ir.get_event_sequence()
-                description = ir.get_description_tokens()  # extract description
-                token_ids = self.tokenizer.encode(events)
+                events = ir.events
+                description = ir.get_description_tokens()
+                # Encode ONLY the event stream against the event vocab.
+                event_ids = self.tokenizer.encode(events)
                 self.examples.extend([{
-                    "tokens": token_ids[i:i + context_size],
+                    "tokens": event_ids[i:i + context_size],
                     "file": file,
-                    "description": description
-                    } for i in range(0, len(token_ids), context_size) if len(token_ids[i:i + context_size]) >= self.min_chunk_len])
+                    "description": description,
+                    } for i in range(0, len(event_ids), context_size) if len(event_ids[i:i + context_size]) >= self.min_chunk_len])
             except Exception as e:
                 # Log failed file processing
                 print(f"Failed to process {file}: {e}")

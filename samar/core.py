@@ -9,6 +9,17 @@ implementations (one in :mod:`samar.parser` and one in
 :mod:`samar.input_representation`); they now re-export from here.
 
 See ``docs/audit-2026-06-25.md`` finding #1 for the rationale.
+
+The two-stream design (description + events) follows the FIGARO paper's
+``InputRepresentation.get_description()`` + ``get_event_seq()`` split
+(``figaro/src/input_representation.py:409-507``). One description stream per
+bar carries ``Bar``, ``TimeSignature``, ``MeanPitch``, ``MeanVelocity``,
+``MeanDuration``, ``NoteDensity``; the event stream carries per-note
+``Position``, ``Pitch_24EDO``, ``Velocity``, ``Duration``, ``Instrument``.
+This is the only correct split -- earlier SAMAR code put the per-bar
+statistics in the event stream, where ``SamarVocab`` has no slots for them,
+producing ~30% ``<unk>`` on real training data. See the 2026-06-25 round-2
+audit (findings A1/A2/A5) for the full rationale.
 """
 
 import xml.etree.ElementTree as ET
@@ -20,7 +31,6 @@ from .constants import (
     PITCH_KEY,
     DURATION_KEY,
     TEMPO_KEY,
-    KEY_SIGNATURE_KEY,
     VELOCITY_KEY,
     INSTRUMENT_KEY,
     NOTE_DENSITY_KEY,
@@ -36,6 +46,7 @@ from .constants import (
     DEFAULT_MEAN_DURATION_BINS,
     DEFAULT_VELOCITY_BINS,
     DEFAULT_RESOLUTION,
+    DEFAULT_INSTRUMENT,  # fallback when <part-name> is missing
 )
 
 
@@ -111,14 +122,23 @@ class MusicXMLParser:
         part_names = {}
         for part in self.root.findall(".//score-part"):
             pid = part.attrib.get("id")
-            name = part.findtext("part-name", default="Instrument")
+            name = part.findtext("part-name", default=DEFAULT_INSTRUMENT)
+            # Many Arabic-Music-Dataset XMLs (MuseScore exports) set
+            # ``<part-name>Part_1</part-name>`` as a placeholder instead of
+            # a real instrument name. The vocab has ``Instrument_Voice``
+            # but no ``Instrument_Part_1`` -- using the placeholder
+            # produces ``<unk>`` for every note. Map any name starting
+            # with ``Part_`` (case-insensitive) to the default instrument.
+            # Audit round-2 finding A4.
+            if not name or name.strip().lower().startswith("part_"):
+                name = DEFAULT_INSTRUMENT
             part_names[pid] = name
 
         # Walk parts in score order; tick counter is shared so multi-part
         # scores stay time-aligned.
         for part in self.root.findall(".//part"):
             part_id = part.attrib.get("id")
-            instrument = part_names.get(part_id, "Unknown")
+            instrument = part_names.get(part_id, DEFAULT_INSTRUMENT)
             current_tick = 0
             for measure in part.findall("measure"):
                 bar_number = int(measure.attrib.get("number", 1))
@@ -183,8 +203,8 @@ def extract_metadata(xml_path):
     """Pull composer/lyricist credits, time signature, key, tempo out of an XML file.
 
     The returned dict's keys are split into two groups:
-      * ``Description_*`` -- meant for the description vocabulary, see
-        ``figaro/src/vocab.py:DescriptionVocab``.
+      * ``Description_*`` -- meant for human inspection (composer, lyricist).
+        These are NEVER tokenized -- FIGARO never encodes free-text metadata.
       * ``TimeSignature``, ``KeySignature``, ``Tempo``, ``Instruments`` --
         consumed by ``SAMARInputRepresentation._build_remi_events``.
     """
@@ -237,15 +257,21 @@ class Event:
 
 
 class SAMARInputRepresentation:
-    """Convert MusicXML -> a sequence of REMI+ tokens.
+    """Convert MusicXML -> a two-stream representation (description + events).
 
-    Splits into two streams (matching FIGARO's design, see
-    ``figaro/src/input_representation.py``):
+    Mirrors the FIGARO ``InputRepresentation`` design exactly:
 
-      * ``description_tokens`` -- time-signature / mean-pitch /
-        note-density / etc. tokens that condition the generation.
-      * ``events`` -- the per-note REMI+ event sequence (Bar, Position,
-        Pitch_24EDO, Velocity, Duration, Instrument).
+      * ``description_tokens`` -- per-bar stream of ``Bar``, ``TimeSignature``,
+        ``MeanPitch``, ``MeanVelocity``, ``MeanDuration``, ``NoteDensity``
+        tokens. Encoded by :class:`~samar.tokenizer.DescriptionTokenizer`
+        against :class:`~samar.vocab.DescriptionVocab`.
+      * ``events`` -- per-note stream of ``Position``, ``Pitch_24EDO``,
+        ``Velocity``, ``Duration``, ``Instrument`` tokens (plus a single
+        global ``Tempo`` token at the start). Encoded by
+        :class:`~samar.tokenizer.SamarTokenizer` against
+        :class:`~samar.vocab.SamarVocab`.
+
+    See :func:`get_event_sequence` for the order in which they're combined.
     """
 
     def __init__(self, xml_file):
@@ -261,80 +287,110 @@ class SAMARInputRepresentation:
         """``np.mean(values)`` or 0 if the input is empty.
 
         Avoids ``RuntimeWarning: Mean of empty slice`` when a bar contains
-        only rests or the file has no pitched notes.
+        only rests or the file has no pitched notes. Handles both Python
+        lists and numpy arrays.
         """
-        if not values:
+        if len(values) == 0:
             return 0
         return np.mean(values)
 
-    def _build_description_tokens(self):
-        """Build description tokens following the FIGARO naming convention.
+    def _bar_index_for_tick(self, tick):
+        """Map a MIDI tick to a 1-based bar number for this piece's time signature."""
+        beats, beat_type = self.time_sig
+        quarters_per_bar = 4 * beats / beat_type
+        ticks_per_bar = int(DEFAULT_RESOLUTION * quarters_per_bar)
+        if ticks_per_bar <= 0:
+            return 1
+        return tick // ticks_per_bar + 1
 
-        Token keys match ``MEAN_PITCH_KEY`` (``"MeanPitch"``),
-        ``MEAN_VELOCITY_KEY`` (``"MeanVelocity"``),
-        ``MEAN_DURATION_KEY`` (``"MeanDuration"``) and
-        ``NOTE_DENSITY_KEY`` (``"NoteDensity"``) -- these are exactly the
-        keys produced by ``figaro/src/vocab.py:DescriptionVocab``. Earlier
-        versions used ``AveragePitch`` / ``AverageVelocity`` /
-        ``AverageDuration``, which silently mapped to ``<unk>`` because the
-        description vocab never contained them.
+    def _notes_by_bar(self):
+        """Group notes by 1-based bar number."""
+        groups = {}
+        for note in self.notes:
+            bar_num = self._bar_index_for_tick(note.start_tick)
+            groups.setdefault(bar_num, []).append(note)
+        return groups
 
-        ``Description_*`` keys (composer credits, lyricist credits),
-        ``KeySignature_*`` and ``Tempo_*`` are deliberately excluded:
-        they're free-text / unstructured metadata that FIGARO never encodes
-        in the description stream (``figaro/src/vocab.py:DescriptionVocab``
-        has no slots for them). Tempo and key signature instead appear in
-        the event stream via :meth:`_build_remi_events`. We still extract
-        them in :func:`extract_metadata` for downstream filtering or
-        human-readable labels, but they don't enter the description tokens.
+    def _bar_stats(self, bar_notes, positions_per_bar):
+        """Quantize per-bar statistics to their bin indices.
 
-        All four statistics are quantized to their bin indices (matching
-        how :meth:`_build_remi_events` emits per-bar statistics). Without
-        this step the raw float values would not match any vocab token.
+        Mirrors the per-bar computation in
+        ``figaro/src/input_representation.py:443-498``. Returns a list of
+        ``(name, index, raw)`` tuples suitable for emitting as description
+        events.
         """
-        tokens = [
-            f"{k}_{v}" for k, v in self.metadata.items()
-            if isinstance(v, (int, float, str))
-            and v is not None
-            and not k.startswith("Description_")
-            and not k.startswith("KeySignature")
-            and not k.startswith("Tempo")
+        n_notes = len(bar_notes)
+        velocities = np.array([n.velocity for n in bar_notes if not n.is_rest])
+        pitches = np.array([n.to_24edo_pitch() for n in bar_notes
+                           if not n.is_rest and n.to_24edo_pitch() is not None])
+        durations = np.array([n.duration for n in bar_notes])
+
+        # ``_safe_mean`` keeps a rest-only bar from emitting
+        # ``RuntimeWarning: Mean of empty slice``. NaN would also work but
+        # breaks ``np.argmin`` below.
+        mean_velocity = self._safe_mean(velocities) if len(velocities) > 0 else 0
+        mean_pitch = self._safe_mean(pitches) if len(pitches) > 0 else 0
+        mean_duration = self._safe_mean(durations) if len(durations) > 0 else 0
+        note_density = n_notes / positions_per_bar if positions_per_bar > 0 else 0
+
+        v_idx = int(np.argmin(np.abs(DEFAULT_MEAN_VELOCITY_BINS - mean_velocity)))
+        p_idx = int(np.argmin(np.abs(DEFAULT_MEAN_PITCH_BINS - mean_pitch)))
+        d_idx = int(np.argmin(np.abs(DEFAULT_MEAN_DURATION_BINS - mean_duration)))
+        nd_idx = int(np.argmin(np.abs(DEFAULT_NOTE_DENSITY_BINS - note_density)))
+
+        return [
+            (NOTE_DENSITY_KEY, nd_idx, note_density),
+            (MEAN_VELOCITY_KEY, v_idx, mean_velocity),
+            (MEAN_PITCH_KEY, p_idx, mean_pitch),
+            (MEAN_DURATION_KEY, d_idx, mean_duration),
         ]
 
-        if self.notes:
-            velocities = [n.velocity for n in self.notes if not n.is_rest]
-            durations = [n.duration for n in self.notes if not n.is_rest]
-            pitches = [n.to_24edo_pitch() for n in self.notes
-                       if not n.is_rest and n.to_24edo_pitch() is not None]
+    def _build_description_tokens(self):
+        """Per-bar description stream -- one ``Bar`` + stats per bar.
 
-            avg_vel = int(self._safe_mean(velocities))
-            avg_dur = int(self._safe_mean(durations))
-            avg_pitch = int(self._safe_mean(pitches))
+        Matches the FIGARO ``InputRepresentation.get_description()`` design
+        (``figaro/src/input_representation.py:409-507``). Each bar emits:
 
-            beats, beat_type = self.time_sig
-            quarters_per_bar = 4 * beats / beat_type
-            ticks_per_bar = int(DEFAULT_RESOLUTION * quarters_per_bar)
-            positions_per_bar = int(DEFAULT_POS_PER_QUARTER * quarters_per_bar)
-            total_bars = max((n.start_tick // ticks_per_bar + 1) for n in self.notes)
+          * ``Bar_N`` -- 1-based bar number
+          * ``TimeSignature_N/M`` -- the bar's time signature (only emitted
+            when the bar's time sig differs from the previous bar's, to
+            avoid redundant tokens; the first bar always emits it)
+          * ``NoteDensity_BIN`` -- quantized note-density bin index
+          * ``MeanVelocity_BIN`` -- quantized mean-velocity bin index
+          * ``MeanPitch_BIN`` -- quantized mean-pitch bin index (in 24-EDO
+            space, since we doubled MIDI for quarter-tones)
+          * ``MeanDuration_BIN`` -- quantized mean-duration bin index
 
-            note_density = round(len(self.notes) / (positions_per_bar * total_bars), 3)
+        Description_Composer_*, KeySignature_*, Tempo_* are deliberately
+        excluded -- FIGARO never encodes free-text or unstructured
+        metadata in the description stream. Tempo goes in the event
+        stream instead.
+        """
+        tokens = []
+        if not self.notes:
+            return tokens
 
-            # Quantize each statistic to its nearest bin so the emitted
-            # token (``MeanPitch_{N}`` etc.) actually exists in the vocab.
-            # ``np.argmin(abs(bins - x))`` returns the closest bin index,
-            # which matches how :meth:`_build_remi_events` does it for the
-            # per-bar statistics.
-            p_idx = int(np.argmin(np.abs(DEFAULT_MEAN_PITCH_BINS - avg_pitch)))
-            v_idx = int(np.argmin(np.abs(DEFAULT_MEAN_VELOCITY_BINS - avg_vel)))
-            d_idx = int(np.argmin(np.abs(DEFAULT_MEAN_DURATION_BINS - avg_dur)))
-            nd_idx = int(np.argmin(np.abs(DEFAULT_NOTE_DENSITY_BINS - note_density)))
+        beats, beat_type = self.time_sig
+        quarters_per_bar = 4 * beats / beat_type
+        ticks_per_bar = int(DEFAULT_RESOLUTION * quarters_per_bar)
+        positions_per_bar = int(DEFAULT_POS_PER_QUARTER * quarters_per_bar)
+        if positions_per_bar <= 0:
+            positions_per_bar = 1
 
-            tokens += [
-                f"{MEAN_PITCH_KEY}_{p_idx}",
-                f"{MEAN_VELOCITY_KEY}_{v_idx}",
-                f"{MEAN_DURATION_KEY}_{d_idx}",
-                f"{NOTE_DENSITY_KEY}_{nd_idx}",
-            ]
+        notes_by_bar = self._notes_by_bar()
+        prev_time_sig = None
+        for bar_num in sorted(notes_by_bar.keys()):
+            bar_notes = notes_by_bar[bar_num]
+            tokens.append(f"{BAR_KEY}_{bar_num}")
+
+            # Emit TimeSignature only when it changes (or on the first bar).
+            current_time_sig = (beats, beat_type)
+            if current_time_sig != prev_time_sig:
+                tokens.append(f"{TIME_SIGNATURE_KEY}_{beats}/{beat_type}")
+                prev_time_sig = current_time_sig
+
+            for name, idx, _raw in self._bar_stats(bar_notes, positions_per_bar):
+                tokens.append(f"{name}_{idx}")
 
         return tokens
 
@@ -342,77 +398,65 @@ class SAMARInputRepresentation:
         return self.description_tokens
 
     def get_event_sequence(self):
-        return self.get_description_tokens() + self.events
+        """Combined token sequence: per-bar description stream + per-note event stream.
+
+        This is what :meth:`SamarTokenizer.encode` consumes for training
+        and what :meth:`SamarTransformer.sample` generates at inference.
+        """
+        return self.description_tokens + self.events
 
     def _build_remi_events(self):
+        """Per-note event stream.
+
+        Emits, in this order:
+
+          * ``Tempo_BIN`` at the start (if ``<sound tempo>`` was found)
+          * Per bar: ``Position``, ``Pitch_24EDO``, ``Velocity``, ``Duration``,
+            ``Instrument`` per note.
+
+        KeySignature_* is NOT emitted (matches FIGARO -- KeySignature is in
+        the constants but never encoded). Per-bar statistics
+        (``MeanPitch``, ``NoteDensity``, ...) belong to the description
+        stream, NOT this one -- emitting them here previously caused
+        ~30% ``<unk>`` on real training data (audit round-2 finding A2).
+        """
         events = []
         if not self.notes:
             return events
 
         beats, beat_type = self.time_sig
-        time_sig_parts = self.metadata.get('TimeSignature', '4/4').split('/')
-        numerator = int(time_sig_parts[0]) if len(time_sig_parts) > 0 else 4
-        denominator = int(time_sig_parts[1]) if len(time_sig_parts) > 1 else 4
-        quarters_per_bar = 4 * numerator / denominator
+        quarters_per_bar = 4 * beats / beat_type
         ticks_per_bar = int(DEFAULT_RESOLUTION * quarters_per_bar)
         positions_per_bar = int(DEFAULT_POS_PER_QUARTER * quarters_per_bar)
 
-        notes_by_bar = {}
-        for note in self.notes:
-            bar_num = note.start_tick // ticks_per_bar + 1
-            notes_by_bar.setdefault(bar_num, []).append(note)
+        # Optional global Tempo token (matches FIGARO event stream).
+        tempo = self.metadata.get("Tempo")
+        if tempo is not None:
+            tempo_idx = int(np.argmin(np.abs(DEFAULT_TEMPO_BINS - int(tempo))))
+            events.append(f"{TEMPO_KEY}_{tempo_idx}")
 
-        if time_sig_parts:
-            events.append(Event(TIME_SIGNATURE_KEY, None, f"{beats}/{beat_type}", f"{beats}/{beat_type}"))
-        if self.metadata.get("KeySignature") is not None:
-            events.append(Event(KEY_SIGNATURE_KEY, None, self.metadata["KeySignature"], str(self.metadata["KeySignature"])))
-        if self.metadata.get("Tempo") is not None:
-            tempo = int(self.metadata["Tempo"])
-            tempo_idx = np.argmin(np.abs(DEFAULT_TEMPO_BINS - tempo))
-            events.append(Event(TEMPO_KEY, None, tempo_idx, str(tempo)))
-
+        notes_by_bar = self._notes_by_bar()
         for bar_num in sorted(notes_by_bar.keys()):
-            bar_notes = notes_by_bar[bar_num]
-            events.append(Event(BAR_KEY, None, bar_num, str(bar_num)))
-
-            # Compute bar-level statistics. ``_safe_mean`` keeps a rest-only
-            # bar from emitting ``RuntimeWarning: Mean of empty slice``.
-            note_density = len(bar_notes) / positions_per_bar
-            avg_velocity = self._safe_mean([n.velocity for n in bar_notes if n.velocity is not None])
-            avg_pitch = self._safe_mean([n.to_24edo_pitch() for n in bar_notes
-                                          if not n.is_rest and n.to_24edo_pitch() is not None])
-            avg_duration = self._safe_mean([n.duration for n in bar_notes])
-
-            d_idx = np.argmin(np.abs(DEFAULT_NOTE_DENSITY_BINS - note_density))
-            v_idx = np.argmin(np.abs(DEFAULT_MEAN_VELOCITY_BINS - avg_velocity))
-            p_idx = np.argmin(np.abs(DEFAULT_MEAN_PITCH_BINS - avg_pitch))
-            dur_idx = np.argmin(np.abs(DEFAULT_MEAN_DURATION_BINS - avg_duration))
-
-            events.append(Event(NOTE_DENSITY_KEY, None, d_idx, str(note_density)))
-            events.append(Event(MEAN_VELOCITY_KEY, None, v_idx, str(avg_velocity)))
-            events.append(Event(MEAN_PITCH_KEY, None, p_idx, str(avg_pitch)))
-            events.append(Event(MEAN_DURATION_KEY, None, dur_idx, str(avg_duration)))
-
-            for note in bar_notes:
+            for note in notes_by_bar[bar_num]:
                 rel_tick = note.start_tick % ticks_per_bar
                 position = int(rel_tick / ticks_per_bar * positions_per_bar)
-                events.append(Event(POSITION_KEY, note.start_tick, position, str(position)))
+                events.append(f"{POSITION_KEY}_{position}")
 
                 if note.is_rest:
-                    events.append(Event(PITCH_KEY, note.start_tick, "Rest", "Rest"))
-                    events.append(Event(VELOCITY_KEY, note.start_tick, 0, "0"))
+                    events.append(f"{PITCH_KEY}_Rest")
+                    events.append(f"{VELOCITY_KEY}_0")
                 else:
                     pitch_val = note.to_24edo_pitch()
-                    events.append(Event(PITCH_KEY, note.start_tick, pitch_val, str(pitch_val)))
+                    events.append(f"{PITCH_KEY}_{pitch_val}")
                     if note.velocity is not None:
-                        vel_idx = np.argmin(np.abs(DEFAULT_VELOCITY_BINS - note.velocity))
-                        events.append(Event(VELOCITY_KEY, note.start_tick, vel_idx, str(note.velocity)))
+                        vel_idx = int(np.argmin(np.abs(DEFAULT_VELOCITY_BINS - note.velocity)))
+                        events.append(f"{VELOCITY_KEY}_{vel_idx}")
 
                 duration_pos = int(note.duration / DEFAULT_RESOLUTION * DEFAULT_POS_PER_QUARTER)
-                duration_idx = np.argmin(np.abs(DEFAULT_DURATION_BINS - duration_pos))
-                events.append(Event(DURATION_KEY, note.start_tick, duration_idx, str(duration_pos)))
+                duration_idx = int(np.argmin(np.abs(DEFAULT_DURATION_BINS - duration_pos)))
+                events.append(f"{DURATION_KEY}_{duration_idx}")
 
                 if note.instrument:
-                    events.append(Event(INSTRUMENT_KEY, note.start_tick, note.instrument, note.instrument))
+                    events.append(f"{INSTRUMENT_KEY}_{note.instrument}")
 
-        return [f"{e.name}_{e.value}" for e in events]
+        return events

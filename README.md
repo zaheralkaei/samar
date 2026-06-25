@@ -57,15 +57,24 @@ python -c "import sys; sys.path.insert(0, '.'); import samar"
 
 ## Pipeline overview
 
+The pipeline follows the FIGARO paper's two-stream design (see
+`figaro/src/input_representation.py`):
+
 1. **Parse** — `MusicXMLParser` reads MusicXML files (24-EDO alters supported)
    into `SamarNote` objects.
-2. **Tokenize** — `SAMARInputRepresentation` converts notes + metadata
-   (key, tempo, time-sig, instrument) into a REMI+ event sequence.
-3. **Encode** — `SamarTokenizer` maps events → token IDs.
-4. **Train** — `train_samar_vae.py` learns discrete latents over description
-   tokens; `train_samar_transformer.py` learns an autoregressive decoder over
-   (latent, tokens).
-5. **Generate** — `generating.py` samples → decodes → reconstructs MusicXML.
+2. **Description stream** — `SAMARInputRepresentation._build_description_tokens()`
+   emits per-bar tokens: `Bar_N`, `TimeSignature_N/M`, `MeanPitch_BIN`,
+   `MeanVelocity_BIN`, `MeanDuration_BIN`, `NoteDensity_BIN`. Encoded by
+   `DescriptionTokenizer` against `DescriptionVocab`.
+3. **Event stream** — `SAMARInputRepresentation._build_remi_events()` emits
+   per-note tokens: `Position`, `Pitch_24EDO`, `Velocity`, `Duration`,
+   `Instrument` (plus a single global `Tempo` token at the start). Encoded
+   by `SamarTokenizer` against `SamarVocab`.
+4. **Train** — `train_samar_vae.py` learns discrete latents over the
+   description stream; `train_samar_transformer.py` learns an
+   autoregressive decoder over (latent, description, events).
+5. **Generate** — `generating.py` samples event tokens → decodes →
+   reconstructs MusicXML via `reconstructor.py`.
 6. **Reconstruct** — `reconstructor.py` writes events back to a valid
    MusicXML 4.0 file with `<alter>` elements carrying quarter-tone values.
 
@@ -97,14 +106,42 @@ pickle is needed for it.
 
 ## Audit
 
-The codebase was audited on 2026-06-25. Findings and the rationale for
-each design choice live in `docs/audit-2026-06-25.md`. Notable drift vs.
-FIGARO:
+The codebase was audited on 2026-06-25 in two rounds. The first round
+fixed 20 mostly-dead-code / drift findings (commit `6d15b00`). The second
+round (current) found and fixed 5 critical functional bugs that round 1
+missed; details in `docs/audit-2026-06-25.md`.
 
-* Token key names use no spaces (``MeanPitch`` instead of FIGARO's ``Mean
-  Pitch``). The existing ``samar_vocab.pkl`` was built with the no-space
-  variant; changing to FIGARO's spacing would invalidate the checkpoint.
-* Description-tokens never include ``Description_Composer_*`` /
-  ``Description_Lyricist_*``. Those are free-text metadata extracted by
-  ``core.extract_metadata`` for human inspection but excluded from the
-  description token stream because FIGARO never encodes them.
+### Drift vs FIGARO
+
+These are the deliberate and unintentional drifts from the upstream
+FIGARO paper (`figaro/src/`):
+
+| # | Decision | FIGARO | SAMAR | Why |
+|---|----------|--------|-------|-----|
+| 1 | Two-stream split | Description + events, two separate vocabs | Same | Match |
+| 2 | Token key names | `'Mean Pitch'` (with space) | `'MeanPitch'` (no space) | Existing pickle uses no-space; would invalidate checkpoint |
+| 3 | Per-bar stats in **description** stream | Yes (`get_description`) | Yes (round-2 fix) | Match |
+| 4 | Per-bar stats in **event** stream | No | Was yes (removed in round-2) | Was a bug — caused 30% `<unk>` |
+| 5 | Pitch vocab range | `range(128)` (MIDI 0..127) | `range(24 * 11)` = 264 quarter-tones | 24-EDO doubling; covers MIDI 0..127 |
+| 6 | Instrument fallback | `pretty_midi.program_to_instrument_name(p)` | `'Voice'` when `<part-name>` is missing or starts with `Part_` | Matches existing `Instrument_Voice` token; avoids `<unk>` |
+| 7 | `KeySignature_*` tokens | Never emitted | Never emitted (round-2 fix) | Match |
+| 8 | `Description_Composer_*` / `Description_Lyricist_*` | Never emitted | Never emitted | Free-text, FIGARO never encodes them |
+| 9 | Per-note velocity | From MIDI velocity | Hardcoded 64 | MusicXML doesn't carry per-note velocity; matching FIGARO would require switching to MIDI input |
+| 10 | Velocity source | Per-note MIDI velocity | Hardcoded 64 | MusicXML doesn't carry per-note velocity |
+| 11 | Description-conditional generation | Available via `description_flavor` | `sample()` accepts `description=` kwarg (not wired in `generating.py`) | Requires retraining with description conditioning |
+| 12 | Pitch key name | `'Pitch'` | `'Pitch_24EDO'` | Intentional — the project's core purpose |
+
+### Known limitations
+
+* **Checkpoint `checkpoints/samar_transformer.pt` predates the round-2
+  fixes.** It was trained on a corpus where ~25% of tokens were
+  `<unk>`. `from_pretrained()` warm-starts the missing
+  `description_embedding` / `pos_embedding` layers, but the underlying
+  weights are stale. **Retrain to get usable output.**
+* **`latents/latents.pt` was precomputed against the pre-round-2
+  tokenization.** Recompute via `python -m samar.precompute_samar_latents`
+  after retraining.
+* **Description-conditional generation is plumbed but not wired.**
+  `SamarTransformer.sample()` accepts a `description` kwarg, but
+  `generating.py` doesn't pass one. To enable, pick a description
+  template and add it to the `sample()` call.

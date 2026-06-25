@@ -62,34 +62,43 @@ class Tokens:
         return [f'{key}_{sig}' for sig in time_sigs]
 
     def get_midi_tokens_samar(
-        instrument_key=INSTRUMENT_KEY,
-        time_signature_key=TIME_SIGNATURE_KEY,
-        pitch_key=PITCH_KEY,
-        velocity_key=VELOCITY_KEY,
-        duration_key=DURATION_KEY,
-        tempo_key=TEMPO_KEY,
-        bar_key=BAR_KEY,
-        position_key=POSITION_KEY
-    ):
-        instrument_tokens = Tokens.get_instrument_tokens(instrument_key)
-        pitch_tokens = [f'{pitch_key}_{i}' for i in range(24 * 6)] + [f'{pitch_key}_Rest']
-        velocity_tokens = [f'{velocity_key}_{i}' for i in range(len(DEFAULT_VELOCITY_BINS))]
-        duration_tokens = [f'{duration_key}_{i}' for i in range(len(DEFAULT_DURATION_BINS))]
-        tempo_tokens = [f'{tempo_key}_{i}' for i in range(len(DEFAULT_TEMPO_BINS))]
-        bar_tokens = [f'{bar_key}_{i}' for i in range(MAX_N_BARS)]
-        position_tokens = [f'{position_key}_{i}' for i in range(MAX_BAR_LENGTH * 4 * DEFAULT_POS_PER_QUARTER)]
-        time_sig_tokens = Tokens.get_time_signature_tokens(time_signature_key)
+            instrument_key=INSTRUMENT_KEY,
+            time_signature_key=TIME_SIGNATURE_KEY,
+            pitch_key=PITCH_KEY,
+            velocity_key=VELOCITY_KEY,
+            duration_key=DURATION_KEY,
+            tempo_key=TEMPO_KEY,
+            bar_key=BAR_KEY,
+            position_key=POSITION_KEY
+        ):
+            instrument_tokens = Tokens.get_instrument_tokens(instrument_key)
+            # Pitch tokens cover 24-EDO MIDI 0..127 (24 * 11 = 264 quarter-tones,
+            # since 24-EDO doubles MIDI pitch). The previous ``range(24 * 6)`` =
+            # 144 covered only MIDI 0..71 and silently dropped higher notes to
+            # ``<unk>`` -- which is most Arabic vocal music (which lives in
+            # MIDI 60..96). See audit round-2 finding A3.
+            #
+            # FIGARO uses ``range(128)`` MIDI pitches directly (no 24-EDO
+            # doubling). SAMAR's doubling is the project's deliberate divergence
+            # to support quarter-tones.
+            pitch_tokens = [f'{pitch_key}_{i}' for i in range(24 * 11)] + [f'{pitch_key}_Rest']
+            velocity_tokens = [f'{velocity_key}_{i}' for i in range(len(DEFAULT_VELOCITY_BINS))]
+            duration_tokens = [f'{duration_key}_{i}' for i in range(len(DEFAULT_DURATION_BINS))]
+            tempo_tokens = [f'{tempo_key}_{i}' for i in range(len(DEFAULT_TEMPO_BINS))]
+            bar_tokens = [f'{bar_key}_{i}' for i in range(MAX_N_BARS)]
+            position_tokens = [f'{position_key}_{i}' for i in range(MAX_BAR_LENGTH * 4 * DEFAULT_POS_PER_QUARTER)]
+            time_sig_tokens = Tokens.get_time_signature_tokens(time_signature_key)
 
-        return (
-            time_sig_tokens +
-            tempo_tokens + 
-            instrument_tokens + 
-            pitch_tokens + 
-            velocity_tokens + 
-            duration_tokens + 
-            bar_tokens + 
-            position_tokens
-        )
+            return (
+                time_sig_tokens +
+                tempo_tokens +
+                instrument_tokens +
+                pitch_tokens +
+                velocity_tokens +
+                duration_tokens +
+                bar_tokens +
+                position_tokens
+            )
 
 class Vocab:
     def __init__(self, counter, specials=[PAD_TOKEN, UNK_TOKEN, BOS_TOKEN, EOS_TOKEN, MASK_TOKEN], unk_token=UNK_TOKEN):
