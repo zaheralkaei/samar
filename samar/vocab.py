@@ -119,11 +119,19 @@ class Vocab:
         return [self.to_s(idx) for idx in seq]
 
 class SamarVocab(Vocab):
+    """Event vocabulary for MusicXML events (pitch, bar, position, ...).
+
+    Matches ``figaro/src/vocab.py:RemiVocab`` -- deliberately excludes
+    description tokens (``Mean Pitch``, ``Mean Velocity``, ``Description_*``).
+    Descriptions are encoded by :class:`DescriptionTokenizer` against
+    :class:`DescriptionVocab`. Earlier versions concatenated the two, which
+    made every description token silently map to ``<unk>`` after the
+    vocabulary and training data drifted apart.
+    """
     def __init__(self):
         midi_tokens = Tokens.get_midi_tokens_samar()
         chord_tokens = Tokens.get_chord_tokens()
-        description_vocab = DescriptionVocab()
-        self.tokens = midi_tokens + chord_tokens + description_vocab.tokens
+        self.tokens = midi_tokens + chord_tokens
         counter = Counter(self.tokens)
         super().__init__(counter)
 

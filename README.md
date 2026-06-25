@@ -74,3 +74,37 @@ python -c "import sys; sys.path.insert(0, '.'); import samar"
 This is an active research codebase. Checkpoints and latents are committed
 for reproducibility. The `archive/` folder holds earlier iterations and can
 be deleted once the project stabilizes.
+
+## Regenerating the vocabulary pickle
+
+`checkpoints/samar_vae.pt` and `samar/samar_vocab.pkl` were both trained with
+the legacy flat module layout (where `vocab.py` and `tokenizer.py` lived at
+the repo root and the description-tokens bug hadn't been introduced yet).
+The current code uses two separate vocabularies -- `SamarVocab` for events
+and `DescriptionVocab` for description tokens -- matching the FIGARO paper
+(`figaro/src/vocab.py`).
+
+**To regenerate from scratch** (only do this if you've retrained from
+scratch and want to commit a fresh vocab):
+
+```python
+from samar.tokenizer import SamarTokenizer
+SamarTokenizer().save("samar/samar_vocab.pkl")
+```
+
+The description vocab is rebuilt from constants on every import, so no
+pickle is needed for it.
+
+## Audit
+
+The codebase was audited on 2026-06-25. Findings and the rationale for
+each design choice live in `docs/audit-2026-06-25.md`. Notable drift vs.
+FIGARO:
+
+* Token key names use no spaces (``MeanPitch`` instead of FIGARO's ``Mean
+  Pitch``). The existing ``samar_vocab.pkl`` was built with the no-space
+  variant; changing to FIGARO's spacing would invalidate the checkpoint.
+* Description-tokens never include ``Description_Composer_*`` /
+  ``Description_Lyricist_*``. Those are free-text metadata extracted by
+  ``core.extract_metadata`` for human inspection but excluded from the
+  description token stream because FIGARO never encodes them.

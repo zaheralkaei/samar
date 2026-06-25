@@ -22,6 +22,9 @@ samar/tests/data/desert_echoes_structured.xml
 generated.xml
 generated_events.txt
 
+# MuseScore auto-save directories
+.mscbackup/
+
 # Editors
 .vscode/
 .idea/

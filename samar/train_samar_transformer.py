@@ -42,7 +42,11 @@ class SamarTransformerTrainer:
         self.val_dataloader = DataLoader(self.val_dataset, batch_size=batch_size, shuffle=False, collate_fn=samar_collate_fn)
 
     def forward(self, input_ids, latent=None, description=None):
-        return self.model(input_ids, tgt=latent, description=description)
+            # NOTE: the keyword is ``latent=`` not ``tgt=``. ``SamarTransformer.forward``
+            # takes a separate ``latent`` parameter that flows through
+            # ``self.latent_embedding`` (a Linear) before reaching the decoder; passing
+            # it as ``tgt=`` would bypass that projection. Fixed in audit round #3.
+            return self.model(input_ids, latent=latent, description=description)
 
     def training_step(self, batch, batch_idx):
         input_ids = batch['input_ids'].to(self.device)
@@ -124,23 +128,47 @@ class SamarTransformerTrainer:
 
 
 def load_trained_transformer():
+    """Load the trained transformer with warm-started missing layers.
+
+    Uses :meth:`SamarTransformer.from_pretrained` so a checkpoint saved
+    before ``description_embedding`` / ``pos_embedding`` were added still
+    loads cleanly (those layers are warm-started from existing weights --
+    see the audit round #4 notes and ``SamarTransformer.from_pretrained``).
+
+    Returns a model in ``eval()`` mode on the auto-selected device.
+    """
+    from .models.samar_transformer import SamarTransformer
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     with open(CONFIG_PATH, 'r') as f:
         config = json.load(f)
-    model = SamarTransformer(**config)
-    model.load_state_dict(torch.load(WEIGHTS_PATH, map_location=device))
-    model.to(device)
+    model, report = SamarTransformer.from_pretrained(
+        WEIGHTS_PATH, config=config, device=str(device)
+    )
+    if report["missing"]:
+        print(f"[load_trained_transformer] warm-started missing layers: {report['missing']}")
+    if report["unexpected"]:
+        print(f"[load_trained_transformer] ignored unexpected keys: {report['unexpected']}")
     model.eval()
     return model
 
 
 if __name__ == "__main__":
-    latent_path = 'latents/latents.pt'
+    # Resolve relative to this file so ``python -m samar.train_samar_transformer``
+    # works from any cwd. The latent file lives next to ``samar_vocab.pkl`` at
+    # the repo root -- see ``docs/audit-2026-06-25.md`` finding #7.
+    latent_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                              "latents", "latents.pt")
 
     model = SamarTransformer(
         d_model=256, n_head=4, num_layers=6, dim_feedforward=512,
         dropout=0.1, vocab_size=1129, latent_dim=128
     )
 
-    trainer = SamarTransformerTrainer(model=model, latent_path=latent_path, tokenizer=tokenizer, batch_size=16, lr=3e-4, context_size=128)
+    # Match ``context_size`` to the canonical checkpoint config so generation
+    # (which uses ``max_length=context_size`` in :mod:`samar.generating`)
+    # reproduces what training saw. Finding #8.
+    trainer = SamarTransformerTrainer(
+        model=model, latent_path=latent_path, tokenizer=tokenizer,
+        batch_size=16, lr=3e-4, context_size=256
+    )
     trainer.train(num_epochs=10)

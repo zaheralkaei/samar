@@ -43,9 +43,18 @@ class SamarTransformer(nn.Module):
         self.max_len = max_len
 
         self.token_embedding = nn.Embedding(vocab_size, d_model)
+        # ``description_embedding`` is intentionally a separate embedding matrix
+        # rather than sharing weights with ``token_embedding``. The two vocabularies
+        # are distinct (SamarVocab vs DescriptionVocab, see vocab.py and the audit
+        # round #2 notes) and the descriptions and events come from different
+        # distributions -- mean pitch / note density / bar tokens behave nothing
+        # like 24-EDO pitch / bar / position tokens. Sharing weights would let
+        # the description-side vocabulary "eat" the event embedding capacity.
         self.description_embedding = nn.Embedding(vocab_size, d_model)
         self.latent_embedding = nn.Linear(latent_dim, d_model)
 
+        # Positional encoding. Max length 512 matches ``MAX_N_BARS`` so we can
+        # condition on a full sequence even if we never train at that length.
         self.pos_embedding = nn.Embedding(max_len, d_model)
 
         self.transformer = nn.Transformer(
@@ -84,11 +93,19 @@ class SamarTransformer(nn.Module):
         latent_output = self.output_layer(output)
         return latent_output
 
-    def sample(self, start_tokens, latent=None, max_length=256, pad_id=None):
+    def sample(self, start_tokens, latent=None, max_length=256, pad_id=None, description=None):
+        """Greedy autoregressive decode.
+
+        ``description`` (optional) is a ``[1, T_desc]`` tensor of description
+        token IDs that conditions the generation. Pass it when you want to
+        steer the output (e.g. with a specific time-signature / key /
+        note-density profile). See ``SamarTransformer.forward`` for the
+        conditioning path.
+        """
         self.eval()
         generated = start_tokens  # shape: [1, T]
         for _ in range(max_length - start_tokens.size(1)):
-            logits = self(generated, latent)  # [seq_len, batch, dim]
+            logits = self(generated, latent=latent, description=description)  # [seq_len, batch, dim]
             logits = logits.permute(1, 0, 2)  # [batch, seq_len, dim]
             next_token_logits = logits[:, -1, :]  # last token
             next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)  # greedy decode

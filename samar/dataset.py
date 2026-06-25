@@ -134,7 +134,22 @@ class SamarLatentDataset(Dataset):
 
 from torch.nn.utils.rnn import pad_sequence
 
-# Collate function to pad sequences in a batch for training
+# Lazy description tokenizer -- rebuilt from constants, no pickle needed.
+_DESCRIPTION_TOKENIZER = None
+def _get_desc_tokenizer():
+    """Return a process-local ``DescriptionTokenizer`` (singleton)."""
+    global _DESCRIPTION_TOKENIZER
+    if _DESCRIPTION_TOKENIZER is None:
+        from .tokenizer import DescriptionTokenizer
+        _DESCRIPTION_TOKENIZER = DescriptionTokenizer()
+    return _DESCRIPTION_TOKENIZER
+
+# Collate function to pad sequences in a batch for training.
+#
+# Descriptions are encoded by ``DescriptionTokenizer`` against the separate
+# ``DescriptionVocab`` (matches FIGARO's split between event and description
+# vocabularies). The ``file`` key is preserved so debugging tools can trace
+# mispredicted tokens back to the source XML.
 def samar_collate_fn(batch):
     input_ids = [item['input_ids'] for item in batch]
     labels = [item['labels'] for item in batch]
@@ -154,10 +169,17 @@ def samar_collate_fn(batch):
         latent_padded = pad_sequence(latent, batch_first=True, padding_value=0)
         batch_dict['latent'] = latent_padded
 
-    
     if 'description' in batch[0]:
         desc_lists = [item['description'] for item in batch]
-        desc_ids = [torch.tensor(get_tokenizer().encode(desc), dtype=torch.long) for desc in desc_lists]
-        desc_padded = pad_sequence(desc_ids, batch_first=True, padding_value=get_tokenizer().get_vocab().pad_id)
+        desc_tok = _get_desc_tokenizer()
+        desc_ids = [torch.tensor(desc_tok.encode(desc), dtype=torch.long) for desc in desc_lists]
+        desc_padded = pad_sequence(desc_ids, batch_first=True, padding_value=desc_tok.get_vocab().pad_id)
         batch_dict['description'] = desc_padded
+
+    # Preserve source filenames so debug tooling can attribute bad batches
+    # to specific training files. ``file`` is not a tensor -- it stays as a
+    # Python list of strings on the batch dict.
+    if 'file' in batch[0]:
+        batch_dict['file'] = [item.get('file', '') for item in batch]
+
     return batch_dict

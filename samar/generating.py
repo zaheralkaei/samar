@@ -60,10 +60,16 @@ print(f"Using latent from file: {sample['file']}")
 start_bar_token = torch.tensor([[vocab.to_i("Bar_0")]], device=device)
 
 with torch.no_grad():
+    # Match ``context_size`` from train_samar_transformer (256) so the
+    # generation length stays within the regime the model was actually
+    # trained on. Going beyond the training context length produces
+    # out-of-distribution positional encodings (the model never saw
+    # ``pos_ids > 256`` during training) and degrades output quality.
+    # Audit round #20.
     gen_token_ids = lm.sample(
         start_tokens=start_bar_token,
         latent=seed_latent,
-        max_length=512,
+        max_length=256,
         pad_id=getattr(vocab, "pad_id", None)
     )
 

@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-Created on Sat May 10 03:03:52 2025
+SAMAR canonical MusicXML input representation.
 
-@author: zaher
+This module is the single source of truth for MusicXML -> REMI+ conversion
+(``SamarNote``, ``MusicXMLParser``, ``extract_metadata``, ``Event``,
+``SAMARInputRepresentation``). Older codebases had two parallel
+implementations (one in :mod:`samar.parser` and one in
+:mod:`samar.input_representation`); they now re-export from here.
+
+See ``docs/audit-2026-06-25.md`` finding #1 for the rationale.
 """
-
-# core.py
-# it has a parser, a metadata_extractor, and compute the input_representation
 
 import xml.etree.ElementTree as ET
 import numpy as np
@@ -35,8 +38,10 @@ from .constants import (
     DEFAULT_RESOLUTION,
 )
 
-# === SamarNote class ===
+
 class SamarNote:
+    """A single note (or rest) in the SAMAR format. Supports 24-EDO alters."""
+
     def __init__(self, start_tick, step, alter, octave, duration, instrument, velocity=64, is_rest=False):
         self.start_tick = int(start_tick)
         self.step = step
@@ -48,6 +53,12 @@ class SamarNote:
         self.is_rest = is_rest
 
     def to_24edo_pitch(self):
+        """Convert to 24-EDO pitch space (MIDI pitch * 2).
+
+        Returns ``None`` for rests. Quarter-tone alters are preserved
+        via the fractional ``alter`` field; e.g. ``alter=-0.5`` lowers the
+        note by a quarter-tone before doubling to 24-EDO.
+        """
         if self.is_rest:
             return None
         step_map = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
@@ -55,8 +66,15 @@ class SamarNote:
         midi_pitch = 12 * (self.octave + 1) + base_pitch
         return int(round(midi_pitch * 2))
 
-# === MusicXMLParser class ===
+
 class MusicXMLParser:
+    """Parse a MusicXML file into ``SamarNote`` objects.
+
+    Honors per-bar time-signature changes (``<time>`` elements inside any
+    ``<measure>``) when computing bar lengths, so a piece that switches
+    2/4 -> 4/4 mid-score is grouped correctly.
+    """
+
     def __init__(self, path):
         self.tree = ET.parse(path)
         self.root = self.tree.getroot()
@@ -65,6 +83,11 @@ class MusicXMLParser:
         self.measures = self._group_notes_by_measure()
 
     def _parse_time_signatures_by_bar(self):
+        """Map ``bar_number -> (beats, beat_type)`` for every bar that defines one.
+
+        Bars without an explicit ``<time>`` element inherit the most recent
+        time signature (handled in :meth:`parse_notes`).
+        """
         bar_time_sigs = {}
         for part in self.root.findall(".//part"):
             for measure in part.findall("measure"):
@@ -91,12 +114,16 @@ class MusicXMLParser:
             name = part.findtext("part-name", default="Instrument")
             part_names[pid] = name
 
+        # Walk parts in score order; tick counter is shared so multi-part
+        # scores stay time-aligned.
         for part in self.root.findall(".//part"):
             part_id = part.attrib.get("id")
             instrument = part_names.get(part_id, "Unknown")
             current_tick = 0
             for measure in part.findall("measure"):
                 bar_number = int(measure.attrib.get("number", 1))
+                # Use this bar's time signature, falling back to 4/4 if
+                # the score never declared one (very rare in real XML).
                 beats, beat_type = self.time_signatures.get(bar_number, (4, 4))
                 ticks_per_bar = int(DEFAULT_RESOLUTION * (4 * beats / beat_type))
                 for note in measure.findall("note"):
@@ -131,9 +158,36 @@ class MusicXMLParser:
                 return int(beats), int(beat_type)
         return 4, 4
 
+    def parse_tempo(self):
+        """First ``<sound tempo="...">`` in the score, or None."""
+        sound = self.root.find(".//sound[@tempo]")
+        if sound is not None:
+            tempo = sound.get("tempo")
+            if tempo:
+                return int(float(tempo))
+        metronome = self.root.find(".//metronome/per-minute")
+        if metronome is not None:
+            return int(float(metronome.text.strip()))
+        return None
 
-# === Metadata extractor ===
+    def parse_key_signature(self):
+        """Number of fifths as a string, or None if missing."""
+        for key in self.root.findall(".//key"):
+            fifths = key.findtext("fifths")
+            if fifths:
+                return fifths
+        return None
+
+
 def extract_metadata(xml_path):
+    """Pull composer/lyricist credits, time signature, key, tempo out of an XML file.
+
+    The returned dict's keys are split into two groups:
+      * ``Description_*`` -- meant for the description vocabulary, see
+        ``figaro/src/vocab.py:DescriptionVocab``.
+      * ``TimeSignature``, ``KeySignature``, ``Tempo``, ``Instruments`` --
+        consumed by ``SAMARInputRepresentation._build_remi_events``.
+    """
     tree = ET.parse(xml_path)
     root = tree.getroot()
     metadata = {}
@@ -168,18 +222,32 @@ def extract_metadata(xml_path):
                 metadata["Tempo"] = int(float(tempo))
     return metadata
 
-# === SAMAR Input Representation ===
+
 class Event:
+    """A single symbolic-music event with metadata (kept for backwards compat)."""
+
     def __init__(self, name, time, value, text):
         self.name = name
         self.time = time
         self.value = value
         self.text = text
+
     def __repr__(self):
         return f"Event(name={self.name}, time={self.time}, value={self.value}, text={self.text})"
 
-# === SAMARInputRepresentation class ===
+
 class SAMARInputRepresentation:
+    """Convert MusicXML -> a sequence of REMI+ tokens.
+
+    Splits into two streams (matching FIGARO's design, see
+    ``figaro/src/input_representation.py``):
+
+      * ``description_tokens`` -- time-signature / mean-pitch /
+        note-density / etc. tokens that condition the generation.
+      * ``events`` -- the per-note REMI+ event sequence (Bar, Position,
+        Pitch_24EDO, Velocity, Duration, Instrument).
+    """
+
     def __init__(self, xml_file):
         self.parser = MusicXMLParser(xml_file)
         self.notes = sorted(self.parser.notes, key=lambda n: n.start_tick)
@@ -188,20 +256,60 @@ class SAMARInputRepresentation:
         self.description_tokens = self._build_description_tokens()
         self.events = self._build_remi_events()
 
+    @staticmethod
+    def _safe_mean(values):
+        """``np.mean(values)`` or 0 if the input is empty.
+
+        Avoids ``RuntimeWarning: Mean of empty slice`` when a bar contains
+        only rests or the file has no pitched notes.
+        """
+        if not values:
+            return 0
+        return np.mean(values)
+
     def _build_description_tokens(self):
+        """Build description tokens following the FIGARO naming convention.
+
+        Token keys match ``MEAN_PITCH_KEY`` (``"MeanPitch"``),
+        ``MEAN_VELOCITY_KEY`` (``"MeanVelocity"``),
+        ``MEAN_DURATION_KEY`` (``"MeanDuration"``) and
+        ``NOTE_DENSITY_KEY`` (``"NoteDensity"``) -- these are exactly the
+        keys produced by ``figaro/src/vocab.py:DescriptionVocab``. Earlier
+        versions used ``AveragePitch`` / ``AverageVelocity`` /
+        ``AverageDuration``, which silently mapped to ``<unk>`` because the
+        description vocab never contained them.
+
+        ``Description_*`` keys (composer credits, lyricist credits),
+        ``KeySignature_*`` and ``Tempo_*`` are deliberately excluded:
+        they're free-text / unstructured metadata that FIGARO never encodes
+        in the description stream (``figaro/src/vocab.py:DescriptionVocab``
+        has no slots for them). Tempo and key signature instead appear in
+        the event stream via :meth:`_build_remi_events`. We still extract
+        them in :func:`extract_metadata` for downstream filtering or
+        human-readable labels, but they don't enter the description tokens.
+
+        All four statistics are quantized to their bin indices (matching
+        how :meth:`_build_remi_events` emits per-bar statistics). Without
+        this step the raw float values would not match any vocab token.
+        """
         tokens = [
             f"{k}_{v}" for k, v in self.metadata.items()
-            if isinstance(v, (int, float, str)) and v is not None
+            if isinstance(v, (int, float, str))
+            and v is not None
+            and not k.startswith("Description_")
+            and not k.startswith("KeySignature")
+            and not k.startswith("Tempo")
         ]
 
         if self.notes:
             velocities = [n.velocity for n in self.notes if not n.is_rest]
             durations = [n.duration for n in self.notes if not n.is_rest]
-            pitches = [n.to_24edo_pitch() for n in self.notes if not n.is_rest and n.to_24edo_pitch() is not None]
+            pitches = [n.to_24edo_pitch() for n in self.notes
+                       if not n.is_rest and n.to_24edo_pitch() is not None]
 
-            avg_vel = int(np.mean(velocities)) if velocities else 0
-            avg_dur = int(np.mean(durations)) if durations else 0
-            avg_pitch = int(np.mean(pitches)) if pitches else 0
+            avg_vel = int(self._safe_mean(velocities))
+            avg_dur = int(self._safe_mean(durations))
+            avg_pitch = int(self._safe_mean(pitches))
 
             beats, beat_type = self.time_sig
             quarters_per_bar = 4 * beats / beat_type
@@ -211,11 +319,21 @@ class SAMARInputRepresentation:
 
             note_density = round(len(self.notes) / (positions_per_bar * total_bars), 3)
 
+            # Quantize each statistic to its nearest bin so the emitted
+            # token (``MeanPitch_{N}`` etc.) actually exists in the vocab.
+            # ``np.argmin(abs(bins - x))`` returns the closest bin index,
+            # which matches how :meth:`_build_remi_events` does it for the
+            # per-bar statistics.
+            p_idx = int(np.argmin(np.abs(DEFAULT_MEAN_PITCH_BINS - avg_pitch)))
+            v_idx = int(np.argmin(np.abs(DEFAULT_MEAN_VELOCITY_BINS - avg_vel)))
+            d_idx = int(np.argmin(np.abs(DEFAULT_MEAN_DURATION_BINS - avg_dur)))
+            nd_idx = int(np.argmin(np.abs(DEFAULT_NOTE_DENSITY_BINS - note_density)))
+
             tokens += [
-                f"AveragePitch_{avg_pitch}",
-                f"AverageVelocity_{avg_vel}",
-                f"AverageDuration_{avg_dur}",
-                f"NoteDensity_{note_density}"
+                f"{MEAN_PITCH_KEY}_{p_idx}",
+                f"{MEAN_VELOCITY_KEY}_{v_idx}",
+                f"{MEAN_DURATION_KEY}_{d_idx}",
+                f"{NOTE_DENSITY_KEY}_{nd_idx}",
             ]
 
         return tokens
@@ -256,10 +374,14 @@ class SAMARInputRepresentation:
         for bar_num in sorted(notes_by_bar.keys()):
             bar_notes = notes_by_bar[bar_num]
             events.append(Event(BAR_KEY, None, bar_num, str(bar_num)))
+
+            # Compute bar-level statistics. ``_safe_mean`` keeps a rest-only
+            # bar from emitting ``RuntimeWarning: Mean of empty slice``.
             note_density = len(bar_notes) / positions_per_bar
-            avg_velocity = np.mean([n.velocity for n in bar_notes if n.velocity is not None])
-            avg_pitch = np.mean([n.to_24edo_pitch() for n in bar_notes if not n.is_rest and n.to_24edo_pitch() is not None])
-            avg_duration = np.mean([n.duration for n in bar_notes])
+            avg_velocity = self._safe_mean([n.velocity for n in bar_notes if n.velocity is not None])
+            avg_pitch = self._safe_mean([n.to_24edo_pitch() for n in bar_notes
+                                          if not n.is_rest and n.to_24edo_pitch() is not None])
+            avg_duration = self._safe_mean([n.duration for n in bar_notes])
 
             d_idx = np.argmin(np.abs(DEFAULT_NOTE_DENSITY_BINS - note_density))
             v_idx = np.argmin(np.abs(DEFAULT_MEAN_VELOCITY_BINS - avg_velocity))

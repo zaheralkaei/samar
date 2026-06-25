@@ -32,7 +32,6 @@ DEFAULT_NOTE_DENSITY_BINS = np.array([
 DEFAULT_MEAN_VELOCITY_BINS = np.linspace(0, 128, 33)
 DEFAULT_MEAN_PITCH_BINS = np.linspace(0, 144, 33)
 DEFAULT_MEAN_DURATION_BINS = np.logspace(0, 7, 33, base=2)
-DEFAULT_VOLUME_BINS = np.linspace(0, 127, 64)
 
 # === Output & Sequence Parameters ===
 MAX_BAR_LENGTH = 3
@@ -56,11 +55,8 @@ VELOCITY_KEY = 'Velocity'
 DURATION_KEY = 'Duration'
 TEMPO_KEY = 'Tempo'
 CHORD_KEY = 'Chord'
-VOLUME_KEY = 'Volume'
 
 NOTE_DENSITY_KEY = 'NoteDensity'
 MEAN_PITCH_KEY = 'MeanPitch'
 MEAN_VELOCITY_KEY = 'MeanVelocity'
 MEAN_DURATION_KEY = 'MeanDuration'
-
-REST_TOKEN = 'Rest'

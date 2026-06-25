@@ -1,12 +1,8 @@
-Description_Title_Hello
-Description_Subtitle_Subtitle
-Description_Composer_example
 TimeSignature_4/4
-KeySignature_-1
-AveragePitch_118
-AverageVelocity_64
-AverageDuration_709
-NoteDensity_0.113
+MeanPitch_26
+MeanVelocity_16
+MeanDuration_32
+NoteDensity_1
 TimeSignature_4/4
 KeySignature_-1
 Bar_1
