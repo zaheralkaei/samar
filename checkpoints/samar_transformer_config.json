@@ -4,6 +4,6 @@
   "num_layers": 6,
   "dim_feedforward": 512,
   "dropout": 0.1,
-  "vocab_size": 1249,
+  "vocab_size": 1254,
   "latent_dim": 128
 }

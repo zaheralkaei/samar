@@ -44,15 +44,17 @@ def _iter_xml_files(path):
     """Yield (label, filepath) tuples from a file or directory.
 
     If ``path`` is a directory, walks it recursively and yields every
-    ``*.xml`` file. If it's a file, yields it once.
+    ``*.xml`` AND ``*.mxl`` file (compressed MusicXML 4.0). If it's
+    a file, yields it once.
     """
-    if os.path.isfile(path) and path.endswith(".xml"):
+    valid_exts = (".xml", ".mxl")
+    if os.path.isfile(path) and path.lower().endswith(valid_exts):
         yield os.path.basename(path), path
         return
     if os.path.isdir(path):
         for root, _dirs, files in os.walk(path):
             for fn in sorted(files):
-                if fn.endswith(".xml"):
+                if fn.lower().endswith(valid_exts):
                     yield fn, os.path.join(root, fn)
 
 
@@ -201,6 +203,38 @@ def cmd_stats(args):
         print(f"  {cat}:")
         for tok, n in top:
             print(f"    {tok:<30s} {n:>5d}")
+
+    # File-extension breakdown (round-4: supports both .xml and .mxl)
+    print(f"\nFile format breakdown:")
+    ext_counter = Counter()
+    for label in (n for n, _ in _iter_xml_files(args.path)):
+        if "." in label:
+            ext_counter[label.rsplit(".", 1)[-1].lower()] += 1
+    for ext, n in ext_counter.most_common():
+        print(f"  .{ext}: {n} files")
+
+    # Maqam + singer distribution (best-effort from filenames)
+    print(f"\nMaqam tags (best-effort from filename):")
+    maqam_keywords = [
+        "bayat", "rast", "saba", "hijaz", "kurd", "ajam", "nahawand",
+        "sikah", "maqam", "saz", "huzam", "awj", "iraq",
+    ]
+    maqam_counter = Counter()
+    for label in (n for n, _ in _iter_xml_files(args.path)):
+        lower = label.lower()
+        for m in maqam_keywords:
+            if m in lower:
+                maqam_counter[m] += 1
+    for m, n in maqam_counter.most_common():
+        print(f"  {m}: {n} files")
+
+    print(f"\nSinger distribution (top 10):")
+    singer_counter = Counter()
+    for label in (n for n, _ in _iter_xml_files(args.path)):
+        singer = label.split("_")[0]
+        singer_counter[singer] += 1
+    for s, n in singer_counter.most_common(10):
+        print(f"  {s}: {n} files")
 
 
 def main():

@@ -44,7 +44,10 @@ class Tokens:
     def get_instrument_tokens(key=INSTRUMENT_KEY):
         common_instrs = [
             "Violin", "Violoncello", "Flute", "Clarinet", "Trumpet",
-            "Oud", "Qanun", "Nay", "Percussion", "Voice", "Piano"
+            "Oud", "Qanun", "Nay", "Percussion", "Voice", "Piano",
+            # Added round-4 audit after expanding data/xml to 78 files:
+            "Harp", "Drumset", "Acoustic Guitar", "Classical Guitar",
+            "Classical Guitar (Tablature)",
         ]
         return [f'{key}_{name}' for name in common_instrs] + [f'{key}_Unknown']
 

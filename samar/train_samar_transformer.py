@@ -28,7 +28,7 @@ _REPO_ROOT = os.path.dirname(_PACKAGE_DIR)
 # These values are read by ``load_trained_transformer`` /
 # ``SamarTransformer.from_pretrained`` and by ``generating.py``.
 # Update the live ``SamarVocab`` size before changing these.
-DEFAULT_VOCAB_SIZE = 1249  # round-2 vocab extension: was 1129
+DEFAULT_VOCAB_SIZE = 1254  # round-2 vocab extension: was 1129. round-4: +5 instruments (Harp, Drumset, etc.)
 DEFAULT_D_MODEL = 256
 DEFAULT_N_HEAD = 4
 DEFAULT_NUM_LAYERS = 6

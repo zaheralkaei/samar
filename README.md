@@ -61,7 +61,8 @@ The pipeline follows the FIGARO paper's two-stream design (see
 `figaro/src/input_representation.py`):
 
 1. **Parse** — `MusicXMLParser` reads MusicXML files (24-EDO alters supported)
-   into `SamarNote` objects.
+   into `SamarNote` objects. Supports both raw `.xml` and compressed
+   `.mxl` (MusicXML 4.0 zip container) via `_parse_xml_root`.
 2. **Description stream** — `SAMARInputRepresentation._build_description_tokens()`
    emits per-bar tokens: `Bar_N`, `TimeSignature_N/M`, `MeanPitch_BIN`,
    `MeanVelocity_BIN`, `MeanDuration_BIN`, `NoteDensity_BIN`. Encoded by
@@ -180,10 +181,16 @@ FIGARO paper (`figaro/src/`):
   `SamarTransformer.sample()` accepts a `description` kwarg, but
   `generating.py` doesn't pass one. To enable, pick a description
   template and add it to the `sample()` call.
-* **Dataset is heavily biased.** Of the 52 XML files in
-  `data/xml/`, 35 are Fairuz (67%), 14 are Bayat (27%), only 1 is
-  Saba. See `docs/audit-round-3.md` for the full singer/maqam
-  distribution and the corpus-expansion plan.
+* **Dataset is biased but expanded (round 4).** Of the 78 files
+  in `data/xml/` (52 `.xml` + 26 `.mxl`), 35 are Fairuz (45%),
+  6 are Abdel Halim Hafez, 5 are Asmahan, plus 30 distinct
+  singer names from the new files. Maqam distribution: Bayat
+  16 (21%), Nahawand 11 (14%), Kurd 8, Ajam 6, Rast 4,
+  Huzam 3, Hijaz 3, Saba 1. Round-4 also added 5 instruments
+  to the vocab (Harp, Drumset, Acoustic Guitar, Classical
+  Guitar, Classical Guitar (Tablature)) so the new MuseScore
+  exports can encode properly. See `docs/audit-round-4.md` (TBD)
+  for the full distribution.
 * **Architectural inconsistency (model output vs sample).** The
   transformer outputs 128-dim vectors per token (the latent dim)
   but `sample()` treats them as vocab logits via `argmax`. The

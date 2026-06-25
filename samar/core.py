@@ -23,6 +23,7 @@ audit (findings A1/A2/A5) for the full rationale.
 """
 
 import xml.etree.ElementTree as ET
+import zipfile
 import numpy as np
 from .constants import (
     BAR_KEY,
@@ -48,6 +49,42 @@ from .constants import (
     DEFAULT_RESOLUTION,
     DEFAULT_INSTRUMENT,  # fallback when <part-name> is missing
 )
+
+
+def _parse_xml_root(path):
+    """Return an ElementTree root for either ``.xml`` or ``.mxl`` input.
+
+    Plain ``.xml`` files are parsed directly. Compressed ``.mxl``
+    files (MusicXML 4.0 standard zip container) are opened with
+    :mod:`zipfile`; the score is loaded from the file referenced
+    by ``META-INF/container.xml``'s ``<rootfile full-path=...>``
+    element (typically ``score.xml`` at the archive root).
+
+    This is the single chokepoint that handles both formats; every
+    downstream caller (``MusicXMLParser``, ``extract_metadata``)
+    goes through it.
+    """
+    if not path.lower().endswith(".mxl"):
+        return ET.parse(path).getroot()
+
+    with zipfile.ZipFile(path) as zf:
+        try:
+            container = zf.read("META-INF/container.xml").decode("utf-8")
+        except KeyError:
+            # No container.xml -- fall back to the first ``.xml`` member.
+            xml_members = [n for n in zf.namelist()
+                           if n.lower().endswith(".xml")
+                           and not n.startswith("META-INF/")]
+            if not xml_members:
+                raise ValueError(f"{path}: no META-INF/container.xml and no .xml members")
+            return ET.fromstring(zf.read(xml_members[0]))
+
+        import re as _re
+        match = _re.search(r'full-path="([^"]+)"', container)
+        if not match:
+            raise ValueError(f"{path}: malformed META-INF/container.xml")
+        score_path = match.group(1)
+        return ET.fromstring(zf.read(score_path))
 
 
 class SamarNote:
@@ -87,7 +124,9 @@ class MusicXMLParser:
     """
 
     def __init__(self, path):
-        self.tree = ET.parse(path)
+        # Supports both ``.xml`` (raw) and ``.mxl`` (MusicXML 4.0
+        # compressed zip container) via ``_parse_xml_root``.
+        self.tree = ET.ElementTree(_parse_xml_root(path))
         self.root = self.tree.getroot()
         self.time_signatures = self._parse_time_signatures_by_bar()
         self.notes = self.parse_notes()
@@ -233,7 +272,7 @@ def extract_metadata(xml_path):
       * ``TimeSignature``, ``KeySignature``, ``Tempo``, ``Instruments`` --
         consumed by ``SAMARInputRepresentation._build_remi_events``.
     """
-    tree = ET.parse(xml_path)
+    tree = ET.ElementTree(_parse_xml_root(xml_path))
     root = tree.getroot()
     metadata = {}
     for credit in root.findall("credit"):
