@@ -84,6 +84,37 @@ This is an active research codebase. Checkpoints and latents are committed
 for reproducibility. The `archive/` folder holds earlier iterations and can
 be deleted once the project stabilizes.
 
+## Description tokens
+
+Description tokens are the per-bar statistical conditioning signal
+(`Bar_N`, `TimeSignature_N/M`, `NoteDensity_BIN`, `MeanVelocity_BIN`,
+`MeanPitch_BIN`, `MeanDuration_BIN`). They follow the FIGARO
+`get_description()` design. The `samar/describe.py` script is the
+user-facing entry point:
+
+```bash
+# Extract per-bar descriptions for a piece
+python -m samar.describe extract data/xml/fairuz_ya_bia_alkhwatem_ajam_1964.xml
+
+# Encode description strings into vocab IDs (what the model consumes)
+python -m samar.describe encode "Bar_1,TimeSignature_4/4,NoteDensity_3,MeanVelocity_16"
+
+# Show description-token distribution across the corpus
+python -m samar.describe stats data/xml/
+```
+
+End-to-end flow:
+1. `extract` writes per-piece description strings
+2. `encode` converts strings -> integer IDs against `DescriptionVocab`
+3. The model takes `[1, T_desc]` description-IDs and uses them to
+   steer generation (see `SamarTransformer.sample(description=...)`)
+
+NOTE: the bundled `checkpoints/samar_transformer.pt` was trained
+WITHOUT description conditioning. The path is plumbed but not
+exercised. After retraining with `description` in the latents,
+wire it through `generating.py` to enable description-conditional
+generation.
+
 ## Regenerating the vocabulary pickle
 
 `checkpoints/samar_vae.pt` and `samar/samar_vocab.pkl` were both trained with
