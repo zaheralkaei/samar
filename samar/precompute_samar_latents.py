@@ -15,8 +15,9 @@ from torch.nn.utils.rnn import pad_sequence
 
 from .models.samar_vae import SamarVQVAE
 from .dataset import SAMARDataset
-from .tokenizer import SamarTokenizer
+from .tokenizer import SamarTokenizer, DescriptionTokenizer
 tokenizer = SamarTokenizer.load(os.path.join(os.path.dirname(__file__), "samar_vocab.pkl"))
+desc_tokenizer = DescriptionTokenizer()
 
 # === Config ===
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # Use GPU if available
@@ -67,12 +68,18 @@ with torch.no_grad():
         input_ids = batch["input_ids"].to(DEVICE)
         latents = vae.encode_latent(input_ids)  # Encode input sequences into latent vectors
 
-        # Store tokens and latents per example
+        # Store tokens, latents, and per-bar descriptions per example.
+        # Round-5: descriptions are needed for description-conditional
+        # generation; encode via DescriptionTokenizer against
+        # DescriptionVocab (matches FIGARO's separate-vocab split).
         for i in range(input_ids.size(0)):
+            desc_tokens = dataset.examples[len(all_latents)]["description"]
+            desc_ids = desc_tokenizer.encode(desc_tokens)
             all_latents.append({
-                "tokens": input_ids[i].cpu().tolist(),  # Original token IDs
-                "latent": latents[i].cpu(),             # Corresponding latent vector
-                "file": batch["file"][i]                # Source file name
+                "tokens": input_ids[i].cpu().tolist(),    # Event token IDs (SamarVocab)
+                "latent": latents[i].cpu(),                # VAE latent vector
+                "file": batch["file"][i],                  # Source filename
+                "description": desc_ids,                   # Description token IDs (DescriptionVocab)
             })
 
 # === Save as a single .pt file ===
