@@ -14,6 +14,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from .input_representation import SAMARInputRepresentation
 from .tokenizer import SamarTokenizer
+from .constants import UNK_TOKEN
 # Load the default vocab pickle sitting next to this package's __init__.py.
 # NOTE: the original pickle was built when the codebase was flat (vocab.py at
 # the project root) and is not yet regenerated. Loading it at import time
@@ -117,27 +118,63 @@ def get_samar_dataloader(data_dir, batch_size=16, context_size=256, max_files=-1
 
 # Dataset class for working with precomputed latent representations
 class SamarLatentDataset(Dataset):
+    """Reads ``latents.pt`` (output of ``precompute_samar_latents.py``)
+    and yields (input_ids, labels, latent, description) tuples.
+
+    Each sample's tokens may be SHORTER than ``context_size`` (e.g.
+    precomputed chunks are 30..255 long while the model uses
+    ``context_size=256``). Round-3 audit C2 found that the old
+    ``len >= context_size`` filter removed ALL 529 samples. We now
+    pad shorter samples with ``pad_id`` from the event tokenizer so
+    every sample has length exactly ``context_size``.
+    """
+
     def __init__(self, latent_path, context_size=256, tokenizer=None):
         self.context_size = context_size
         self.samples = torch.load(latent_path)
         self.tokenizer = tokenizer or SamarTokenizer.load(_TOKENIZER_PATH)
-        # Keep only samples that meet the minimum length requirement
-        self.samples = [
-            s for s in self.samples if len(s["tokens"]) >= context_size
-        ]
+        self.pad_id = self.tokenizer.get_vocab().pad_id
+
+        # Detect-and-warn about stale latents (pre-round-2 corruption
+                # shows up as a high <unk> ratio). Round-3 audit M4.
+        unk_id = self.tokenizer.get_vocab().to_i(UNK_TOKEN)
+        total_tokens = sum(len(s["tokens"]) for s in self.samples)
+        unk_tokens = sum(1 for s in self.samples
+                         for t in s["tokens"] if t == unk_id)
+        if total_tokens > 0:
+            unk_ratio = unk_tokens / total_tokens
+            if unk_ratio > 0.05:
+                print(f"[SamarLatentDataset] WARNING: {unk_ratio:.1%} <unk> tokens "
+                      f"in {latent_path}. Run "
+                      f"`python -m samar.precompute_samar_latents` to regenerate.")
 
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, idx):
         item = self.samples[idx]
-        tokens = item["tokens"][:self.context_size]
+        tokens = list(item["tokens"][: self.context_size])
+        # Right-pad short samples to context_size so DataLoader collate
+        # can stack them into a uniform tensor.
+        if len(tokens) < self.context_size:
+            tokens = tokens + [self.pad_id] * (self.context_size - len(tokens))
         latent = item["latent"]
-        return {
-            "input_ids": torch.tensor(tokens[:-1], dtype=torch.long),  # input sequence
-            "labels": torch.tensor(tokens[1:], dtype=torch.long),      # target sequence
-            "latent": torch.tensor(latent, dtype=torch.float)          # latent vector
-        }
+        result = {
+                    "input_ids": torch.tensor(tokens[:-1], dtype=torch.long),  # T = context_size-1
+                    "labels": torch.tensor(tokens[1:], dtype=torch.long),      # T = context_size-1
+                    "latent": (torch.as_tensor(latent).detach().clone().float()
+                               if isinstance(latent, torch.Tensor)
+                               else torch.tensor(latent, dtype=torch.float)),
+                }
+        # Round-3 audit M1: include description if available in the latent
+        # sample. The precomputed ``latents.pt`` doesn't store descriptions
+        # yet (added in a later round); until then, leave the key absent
+        # so the trainer / collator fall back to ``description=None``.
+        if "description" in item:
+            result["description"] = torch.tensor(
+                item["description"][: self.context_size], dtype=torch.long
+            )
+        return result
 
 from torch.nn.utils.rnn import pad_sequence
 

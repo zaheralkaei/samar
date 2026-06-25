@@ -67,3 +67,11 @@ MEAN_DURATION_KEY = 'MeanDuration'
 # ``SamarVocab`` / ``DescriptionVocab`` (no new vocab entries needed).
 # Audit round-2 finding A4.
 DEFAULT_INSTRUMENT = 'Voice'
+
+# === Trainer audit version ===
+# Bump when ``train_samar_transformer.py`` or ``train_samar_vae.py``
+# changes its training-loop semantics (loss, optimizer, schedule,
+# gradient handling). Set/checkpoint saved alongside the weights
+# allows future audits to detect silent training-loop drift without
+# diffing the source.
+AUDIT_TRAINER_VERSION = 'round-3'

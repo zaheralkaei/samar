@@ -98,11 +98,27 @@ class MusicXMLParser:
 
         Bars without an explicit ``<time>`` element inherit the most recent
         time signature (handled in :meth:`parse_notes`).
+
+        Some MusicXML files have measure ``number`` attributes that are
+        editorial markers (e.g. ``X1``, ``X2`` for repeats) rather than
+        numeric bar indices. Round-3 audit C4: the bare ``int(...)``
+        cast crashed 3 files; we now fall back to the most recent
+        numeric bar number.
         """
         bar_time_sigs = {}
+        last_numeric_bar = 0
         for part in self.root.findall(".//part"):
             for measure in part.findall("measure"):
-                bar_number = int(measure.attrib.get("number", 1))
+                raw_number = measure.attrib.get("number", "1")
+                try:
+                    bar_number = int(raw_number)
+                except ValueError:
+                    # Editorial marker (X1, X2, ...) -- inherit the
+                    # most recent numeric bar number so the bar stays
+                    # tied to its predecessors.
+                    bar_number = last_numeric_bar
+                else:
+                    last_numeric_bar = bar_number
                 time_elem = measure.find("attributes/time")
                 if time_elem is not None:
                     beats = time_elem.findtext("beats")
@@ -141,7 +157,16 @@ class MusicXMLParser:
             instrument = part_names.get(part_id, DEFAULT_INSTRUMENT)
             current_tick = 0
             for measure in part.findall("measure"):
-                bar_number = int(measure.attrib.get("number", 1))
+                # Round-3 audit C4: tolerate editorial markers
+                # (e.g. ``X1``) in the measure ``number`` attribute.
+                raw_bar = measure.attrib.get("number", "1")
+                try:
+                    bar_number = int(raw_bar)
+                except ValueError:
+                    # Use the bar counter from the time-signature map
+                    # (it tracks only the numeric bars). Fall back to
+                    # the previous numeric bar number if needed.
+                    bar_number = max(self.time_signatures.keys(), default=1)
                 # Use this bar's time signature, falling back to 4/4 if
                 # the score never declared one (very rare in real XML).
                 beats, beat_type = self.time_signatures.get(bar_number, (4, 4))
