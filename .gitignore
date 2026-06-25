@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# ML artifacts — kept in repo for now, but ignore regenerated intermediates
+*.ids
+data/tokenized/
+data/remi_txt/
+
+# TensorBoard
+logs/*.tfevents.*
+# Keep hparams.yaml
+!logs/**/*.yaml
+
+# Editors
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
