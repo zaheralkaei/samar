@@ -315,6 +315,18 @@ def load_trained_transformer():
 
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--num-epochs", type=int, default=10,
+        help="Number of training epochs (round-9: 50 recommended).",
+    )
+    parser.add_argument(
+        "--lr", type=float, default=3e-4,
+        help="Adam learning rate.",
+    )
+    args = parser.parse_args()
+
     latent_path = os.path.join(_REPO_ROOT, "latents", "latents.pt")
 
     model = SamarTransformer(
@@ -331,11 +343,11 @@ if __name__ == "__main__":
         model=model,
         latent_path=latent_path,
         tokenizer=_load_tokenizer(),
-        batch_size=16,
-        lr=3e-4,
-        context_size=256,
+                batch_size=16,
+                        lr=args.lr,
+                        context_size=256,
         val_fraction=0.1,    # round-3 audit T1: actual train/val split
         gradient_clip=1.0,   # round-3 audit T5
         warmup_steps=1000,   # round-3 audit T7
     )
-    trainer.train(num_epochs=10)
+    trainer.train(num_epochs=args.num_epochs)
