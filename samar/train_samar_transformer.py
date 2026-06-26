@@ -95,6 +95,7 @@ class SamarTransformerTrainer:
         self.context_size = context_size
         self.gradient_clip = gradient_clip
         self.warmup_steps = warmup_steps
+self.best_val = float("inf")  # round-5: track best val_loss for checkpointing
         self.tokenizer = tokenizer or _load_tokenizer()
 
         if not latent_path:
@@ -262,7 +263,16 @@ class SamarTransformerTrainer:
             print(f"Epoch {epoch+1}/{num_epochs}  "
                   f"train_loss={train_avg:.4f}  val_loss={val_avg:.4f}")
 
-        self.save_model()
+            # Round-5 fix: save best-val checkpoint every epoch so we
+            # never lose training progress to a crash. Previously the
+            # model was only saved at the END of all epochs, which
+            # meant any mid-training failure lost everything.
+            if val_avg < best_val:
+                best_val = val_avg
+                self.save_model()
+                print(f"[trainer] New best val_loss={val_avg:.4f}")
+
+            self.save_model()  # Final save even if not the best
 
 
 def load_trained_transformer():
