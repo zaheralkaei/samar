@@ -66,26 +66,53 @@ def reconstruct_musicxml_from_events(input_or_events, output_xml_path: str):
         last_tick = 0
         current_time_signature = (4, 4)
 
+        # Round-7: helpers to ensure the first measure of each part
+        # has the MusicXML <attributes> block (time signature, key,
+        # clef). Without this, MuseScore silently drops content
+        # because there's nothing to anchor the rendering to.
+        def _ensure_attributes(meas):
+            """Add <attributes> block to a measure if it doesn't have one.
+            Round-7: MuseScore fix -- measure 0 / missing-attributes
+            bars were rendering as empty.
+            """
+            if meas.find("attributes") is not None:
+                return
+            attr = ET.SubElement(meas, "attributes")
+            ET.SubElement(attr, "divisions").text = str(original_divisions)
+            time = ET.SubElement(attr, "time")
+            ET.SubElement(time, "beats").text = str(current_time_signature[0])
+            ET.SubElement(time, "beat-type").text = str(current_time_signature[1])
+            key = ET.SubElement(attr, "key")
+            ET.SubElement(key, "fifths").text = "0"
+            clef = ET.SubElement(attr, "clef")
+            ET.SubElement(clef, "sign").text = "G"
+            ET.SubElement(clef, "line").text = "2"
+
+        # Round-7: convert generated "Bar_N" tokens to standard
+        # MusicXML "1-indexed" measure numbers. SAMAR emits Bar_0
+        # to start; renumber so MuseScore renders properly. The
+        # first bar encountered becomes measure 1, Bar_1 -> 2, etc.
+        bar_offset = None  # set on first Bar_ token
+
         for ev in events:
             if ev.startswith(BAR_KEY + "_"):
                 name = BAR_KEY
                 raw_val = ev[len(BAR_KEY)+1:]
-                current_bar = int(raw_val)
+                raw_bar = int(raw_val)
+                if bar_offset is None:
+                    # First bar token: capture offset so Bar_0 -> 1
+                    bar_offset = raw_bar - 1
+                current_bar = raw_bar - bar_offset
                 current_tick = 0
+                last_tick = 0
                 for pid, part_elem in part_map.items():
                     m = ET.SubElement(part_elem, 'measure', number=str(current_bar))
                     measures[(pid, current_bar)] = m
+                    # Round-7: add attributes to the first measure
+                    # of each part (measure number == 1 in standard
+                    # MusicXML numbering).
                     if current_bar == 1:
-                        attr = ET.SubElement(m, 'attributes')
-                        ET.SubElement(attr, 'divisions').text = str(original_divisions)
-                        time = ET.SubElement(attr, 'time')
-                        ET.SubElement(time, 'beats').text = str(current_time_signature[0])
-                        ET.SubElement(time, 'beat-type').text = str(current_time_signature[1])
-                        key = ET.SubElement(attr, 'key')
-                        ET.SubElement(key, 'fifths').text = '0'
-                        clef = ET.SubElement(attr, 'clef')
-                        ET.SubElement(clef, 'sign').text = 'G'
-                        ET.SubElement(clef, 'line').text = '2'
+                        _ensure_attributes(m)
 
             elif ev.startswith(TIME_SIGNATURE_KEY + "_"):
                 raw_val = ev[len(TIME_SIGNATURE_KEY)+1:]
@@ -109,6 +136,20 @@ def reconstruct_musicxml_from_events(input_or_events, output_xml_path: str):
             if all(k in note_buffer for k in ['pitch', 'duration_idx', 'instrument']):
                 inst_name = note_buffer['instrument'].strip().lower()
                 pid = instrument_map.get(inst_name, "P1")
+                # Round-7: if no Bar_ token has been seen yet, start
+                # in measure 1 (1-indexed for MuseScore). This
+                # happens for short generations or if the model
+                # skipped the Bar_0 token.
+                if current_bar is None:
+                    if bar_offset is None:
+                        bar_offset = -1  # so Bar_0 -> 1, but treat first note as Bar_0
+                    current_bar = 1
+                    current_tick = 0
+                    last_tick = 0
+                    for pid2, part_elem2 in part_map.items():
+                        m = ET.SubElement(part_elem2, 'measure', number='1')
+                        measures[(pid2, 1)] = m
+                        _ensure_attributes(m)
                 meas = measures.get((pid, current_bar))
                 if meas is None:
                     meas = ET.SubElement(part_map[pid], 'measure', number=str(current_bar))

@@ -41,15 +41,15 @@ Across all 6 examples (see per-example notes below):
   in this batch** -- the model didn't happen to pick the quarter-tone
   E half-flat that we saw in the earlier /tmp/gen5.xml test.
 - **Instruments**: Voice, Piano, Violin appear in all 6. Harp
-  appears in 3. **Drumset appears in 2** (round-4 vocab extension
-  working).
+  appears in 1. **Drumset appears in 0** in this regenerated batch.
 - **Velocity bias**: All examples dominated by `Velocity_16`. This
   is the round-2 known issue: velocity=64 was hardcoded in the
   parser. Real data probably has more variety; the model learned
   the bias.
-- **Bars**: 2-5 per piece (the model starts in mid-bar `Bar_0` and
-  doesn't emit new Bar tokens within 256 steps. This is a known
-  limitation -- round-4 audit documented it.)
+- **Bars**: All measures now numbered `1` (MuseScore-friendly)
+  with `<attributes>` block (time sig, key, clef) added. Earlier
+  regeneration had `measure number="0"` which MuseScore renders
+  as empty -- the round-7 reconstructor fix renumbers 0->1.
 
 ## Known limitations (round 6 model)
 
