@@ -325,9 +325,20 @@ if __name__ == "__main__":
         "--lr", type=float, default=3e-4,
         help="Adam learning rate.",
     )
+    parser.add_argument(
+        "--latent-path", type=str, default=None,
+        help=(
+            "Path to precomputed latents.pt. Default: "
+            "latents/latents.pt (Arabic MusicXML). Pass "
+            "latents/midi_latents.pt to train on Western classical MIDI."
+        ),
+    )
     args = parser.parse_args()
 
-    latent_path = os.path.join(_REPO_ROOT, "latents", "latents.pt")
+    if args.latent_path:
+        latent_path = args.latent_path
+    else:
+        latent_path = os.path.join(_REPO_ROOT, "latents", "latents.pt")
 
     model = SamarTransformer(
         d_model=DEFAULT_D_MODEL,

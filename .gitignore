@@ -8,6 +8,10 @@ __pycache__/
 data/tokenized/
 data/remi_txt/
 
+# Large MIDI latents (1.8GB, exceeds git size limit; reproduce with:
+#   python -m samar.precompute_midi_latents)
+latents/midi_latents.pt
+
 # TensorBoard
 logs/*.tfevents.*
 # Keep hparams.yaml
