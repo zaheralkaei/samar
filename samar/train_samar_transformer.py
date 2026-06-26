@@ -146,66 +146,78 @@ class SamarTransformerTrainer:
     def training_step(self, batch):
             """One training step. Returns scalar loss.
 
-            Round-3 audit C1 fixed ``tgt=latent`` -> ``latent=latent``
-            (round 1 had only fixed the unused ``forward`` method).
+            Round-8 architectural fix: loss is now CrossEntropy on
+            next-event-id prediction (proper LM-style training), not
+            MSE against latents. The model's ``output_layer`` projects
+            to vocab_size directly so we can compute the token
+            distribution at each step.
 
-            The architectural shape of this loss comes from the original
-            design: the model is trained to map (latent, events) -> a
-            per-step 128-dim prediction, and the loss is MSE against the
-            ground-truth latent vectors from ``latents.pt``. The model's
-            ``sample()`` method treats the 128-dim output as if it were
-            vocab logits via ``argmax``; this is a pre-existing design
-            inconsistency in the model that should be addressed in a
-            separate refactor (a future round-4 audit item).
+            The ``labels`` field is the standard autoregressive shift:
+            ``labels[t] = input_ids[t+1]`` for t in [0, T-1]. We
+            compare ``logits[t]`` (predicted distribution at step t)
+            against ``labels[t]`` (the actual next token).
             """
             input_ids = batch["input_ids"].to(self.device)
-            # Round-3 audit: ``batch["labels"]`` is the next-event-id
-            # sequence (unused in the current loss). ``batch["latent"]``
-            # is the per-step 128-dim VAE target.
             latent = batch.get("latent")
-            if latent is None:
-                raise RuntimeError(
-                    "batch['latent'] is required but missing. Regenerate "
-                    "`latents/latents.pt` via "
-                    "`python -m samar.precompute_samar_latents`."
-                )
-            latent = latent.to(self.device)  # [B, T, 128]
-
             description = batch.get("description")
             if description is not None:
                 description = description.to(self.device)
+            # Latent is used as decoder input style conditioning
+            # (the VAE latent space is still useful as a "piece style"
+            # signal). It is no longer the loss target.
+            if latent is not None:
+                latent = latent.to(self.device)
 
             # Forward pass.
-            predicted = self.model(input_ids, latent=latent, description=description)
-            # Model returns ``[T, B, dim]`` (PyTorch nn.Transformer output).
-            predicted = predicted.permute(1, 0, 2)  # [B, T, dim]
+            logits = self.model(input_ids, latent=latent, description=description)
+            # Model returns ``[T, B, vocab_size]`` (PyTorch nn.Transformer output).
+            logits = logits.permute(1, 0, 2)  # [B, T, vocab_size]
 
-            # Align sequence lengths (defensive: in practice they match).
-            L = min(predicted.size(1), latent.size(1))
-            predicted = predicted[:, :L, :]
-            latent = latent[:, :L, :]
+            # Build the autoregressive labels: predict input_ids[t+1] from
+            # logits[t]. The model's `labels` field already encodes this
+            # shift (see SamarLatentDataset). Pad positions use pad_id (0).
+            labels = batch.get("labels")
+            if labels is None:
+                raise RuntimeError(
+                    "batch['labels'] is required but missing. The round-8 "
+                    "trainer needs the next-event-id targets."
+                )
+            labels = labels.to(self.device)  # [B, T]
 
-            return F.mse_loss(predicted, latent)
+            # Cross-entropy over the full sequence (ignore_index=0 is pad_id).
+            # logits: [B, T, V] -> [B*T, V]; labels: [B, T] -> [B*T].
+            loss = F.cross_entropy(
+                logits.reshape(-1, logits.size(-1)),
+                labels.reshape(-1),
+                ignore_index=0,  # pad_id
+            )
+            return loss
 
     def validation_step(self, batch):
         """One validation step. Returns scalar loss (no grad)."""
         with torch.no_grad():
             input_ids = batch["input_ids"].to(self.device)
             latent = batch.get("latent")
-            if latent is None:
-                raise RuntimeError("batch['latent'] is required but missing.")
-            latent = latent.to(self.device)
-
             description = batch.get("description")
             if description is not None:
                 description = description.to(self.device)
+            if latent is not None:
+                latent = latent.to(self.device)
 
-            predicted = self.model(input_ids, latent=latent, description=description)
-            predicted = predicted.permute(1, 0, 2)
-            L = min(predicted.size(1), latent.size(1))
-            predicted = predicted[:, :L, :]
-            latent = latent[:, :L, :]
-            return F.mse_loss(predicted, latent)
+            logits = self.model(input_ids, latent=latent, description=description)
+            logits = logits.permute(1, 0, 2)
+
+            labels = batch.get("labels")
+            if labels is None:
+                raise RuntimeError("batch['labels'] is required but missing.")
+            labels = labels.to(self.device)
+
+            loss = F.cross_entropy(
+                logits.reshape(-1, logits.size(-1)),
+                labels.reshape(-1),
+                ignore_index=0,
+            )
+            return loss
 
     def configure_optimizers(self):
         optimizer = Adam(self.model.parameters(), lr=self.lr)

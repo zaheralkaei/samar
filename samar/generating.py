@@ -172,11 +172,12 @@ def main():
     # (``[B, T, latent_dim]``), not vocab logits. To get event tokens we
     # pass the predicted latent through the VAE decoder to get
     # ``[B, vocab_size]`` logits, then sample with the requested
-    # temperature / top-k / top-p. This is the round-6 architectural
-    # fix -- the old ``argmax`` path on the latent-dim output
-    # produced invalid token IDs (the round-3 audit documented this).
+    # Round-8: the transformer now predicts vocab logits directly, so
+    # the ``vae.decoder`` path is no longer needed. ``vae_decoder`` is
+    # kept as a parameter on ``lm.sample()`` for backwards compatibility
+    # but is not passed -- the model's own ``output_layer`` produces
+    # the logits.
     start_bar_token = torch.tensor([[vocab.to_i("Bar_0")]], device=device)
-    vae_decoder = None if args.no_vae_decode else vae.decoder
 
     with torch.no_grad():
         gen_token_ids = lm.sample(
@@ -188,7 +189,6 @@ def main():
             temperature=args.temperature,
             top_k=args.top_k,
             top_p=args.top_p,
-            vae_decoder=vae_decoder,
         )
 
     # === Decode generated tokens into REMI+ events ===
