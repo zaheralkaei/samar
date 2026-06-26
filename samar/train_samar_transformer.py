@@ -226,6 +226,7 @@ class SamarTransformerTrainer:
 
     def train(self, num_epochs=10, log_every_n_batches=50):
         optimizer, scheduler = self.configure_optimizers()
+        best_val = float("inf")  # round-5: track best val_loss for checkpointing
 
         for epoch in range(num_epochs):
             # === Train ===
