@@ -24,6 +24,7 @@ NoteDensity_1
 MeanVelocity_0
 MeanPitch_0
 MeanDuration_32
+Bar_1
 Position_0
 Pitch_24EDO_120
 Velocity_16
@@ -49,6 +50,7 @@ Pitch_24EDO_130
 Velocity_16
 Duration_11
 Instrument_Violin
+Bar_2
 Position_0
 Pitch_24EDO_134
 Velocity_16
@@ -74,6 +76,7 @@ Pitch_24EDO_144
 Velocity_16
 Duration_11
 Instrument_Violin
+Bar_3
 Position_0
 Pitch_24EDO_140
 Velocity_16
@@ -104,6 +107,7 @@ Pitch_24EDO_130
 Velocity_16
 Duration_11
 Instrument_Violin
+Bar_4
 Position_0
 Pitch_24EDO_127
 Velocity_16
@@ -134,6 +138,7 @@ Pitch_24EDO_72
 Velocity_16
 Duration_11
 Instrument_Violoncello
+Bar_5
 Position_0
 Pitch_24EDO_Rest
 Velocity_0

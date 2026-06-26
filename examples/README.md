@@ -8,15 +8,16 @@ All examples use:
 - 256 max-length (training context_size)
 - vae-decoder sampling (the round-6 architectural fix)
 - special-token masking (prevents early <pad> stop)
+- **round-8**: transformer-as-LM architecture, proper next-token prediction
 
-| # | Maqam | Singer | Template XML | Temperature | Top-k | Notes |
+| # | Maqam | Singer | Template XML | Temperature | Top-k/p | Notes |
 |---|---|---|---|---|---|---|
-| 01 | Bayat | Fairuz | fairuz_ana_indi-.hanin_bayat_1979.xml | 0.8 | 30 | moderate diversity |
-| 02 | Kurd | Abdel Halim Hafez | abdel_halim_hafez_ala_qad_ilshuq_kurd_1955.xml | 1.0 | 50 | full default |
-| 03 | Nahawand | Asmahan | asmahan_imta_hateraf_nahawand_1944.xml | 1.2 | (top_p=0.85) | more random |
-| 04 | Rast | Abdel Halim Hafez | abdel_halim_hafez_quli_haja_rast_1962.xml | 0.7 | 20 | deterministic |
-| 05 | Huzam | Abdel Halim Hafez | abdel_halim_hafez_qululu_alhaqiqa_huzam_1958.xml | 1.0 | 40 | high diversity |
-| 06 | Ajam | Fairuz | fairuz_ya_bia_alkhwatem_ajam_1964.xml | 1.0 | 50 | full default |
+| 01 | Bayat | Fairuz | fairuz_ana_indi-.hanin_bayat_1979.xml | 1.2 | top_p=0.85 | 52 measures (bar spam) |
+| 02 | Kurd | Abdel Halim Hafez | abdel_halim_hafez_ala_qad_ilshuq_kurd_1955.xml | 1.2 | top_p=0.85 | 29 measures (high diversity) |
+| 03 | Nahawand | Asmahan | asmahan_imta_hateraf_nahawand_1944.xml | 1.2 | top_p=0.85 | 30 measures (model rich) |
+| 04 | Rast | Abdel Halim Hafez | abdel_halim_hafez_quli_haja_rast_1962.xml | 0.7 | top_k=30 | 2 measures (deterministic) |
+| 05 | Huzam | Abdel Halim Hafez | abdel_halim_hafez_qululu_alhaqiqa_huzam_1958.xml | 1.2 | top_p=0.85 | 33 measures (high diversity) |
+| 06 | Ajam | Fairuz | fairuz_ya_bia_alkhwatem_ajam_1964.xml | 1.0 | top_k=50 | 7 measures (good content) |
 
 ## How to regenerate any example
 
