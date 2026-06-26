@@ -95,7 +95,7 @@ class SamarTransformerTrainer:
         self.context_size = context_size
         self.gradient_clip = gradient_clip
         self.warmup_steps = warmup_steps
-self.best_val = float("inf")  # round-5: track best val_loss for checkpointing
+        self.best_val = float("inf")  # round-5: track best val_loss for checkpointing
         self.tokenizer = tokenizer or _load_tokenizer()
 
         if not latent_path:
