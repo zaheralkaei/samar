@@ -176,7 +176,7 @@ class SamarLatentDataset(Dataset):
         # sample. The precomputed ``latents.pt`` doesn't store descriptions
         # yet (added in a later round); until then, leave the key absent
         # so the trainer / collator fall back to ``description=None``.
-        if "description" in item:
+        if "description" in item and item["description"] is not None:
             result["description"] = torch.tensor(
                 item["description"][: self.context_size], dtype=torch.long
             )
