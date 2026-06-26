@@ -143,6 +143,14 @@ class SamarTransformer(nn.Module):
                     next_token = torch.argmax(logits, dim=-1, keepdim=True)
                 else:
                     logits = logits / max(temperature, 1e-6)
+                    # Round-6: mask out special tokens (pad/unk/bos/eos/mask)
+                    # before sampling so the model never picks them as
+                    # actual events. The VAE decoder often assigns them
+                    # non-trivial probability for ambiguous latents, which
+                    # kills generation length with early-stopping.
+                    if getattr(self, "_special_token_ids", None):
+                        logits = logits.clone()
+                        logits[:, self._special_token_ids] = float("-inf")
                     if top_k > 0:
                         k = min(top_k, logits.size(-1))
                         values, _ = torch.topk(logits, k, dim=-1)
@@ -257,4 +265,21 @@ class SamarTransformer(nn.Module):
                         pe[:, 0::2] = _torch.sin(pos * div)
                         pe[:, 1::2] = _torch.cos(pos * div)
                         model.pos_embedding.weight.copy_(pe)
+
+        # Round-6: pre-compute the list of special token IDs that the
+        # sampler should mask out (<pad>, <unk>, <bos>, <eos>, <mask>).
+        # Avoids a per-step dictionary lookup.
+        try:
+            from samar.tokenizer import SamarTokenizer
+            import os as _os
+            tk = SamarTokenizer.load(_os.path.join(_os.path.dirname(__file__), "..", "samar_vocab.pkl"))
+            vocab = tk.get_vocab()
+            specials = ["<pad>", "<unk>", "<bos>", "<eos>", "<mask>"]
+            ids = []
+            for tok in specials:
+                if tok in vocab.stoi:
+                    ids.append(vocab.stoi[tok])
+            model._special_token_ids = ids
+        except Exception:
+            model._special_token_ids = []
         return model.to(device), {"missing": missing, "unexpected": unexpected}
