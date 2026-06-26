@@ -136,6 +136,14 @@ def main():
                   "falling back to empty description.")
             desc_tokens = []
     desc_ids = desc_tokenizer.encode(desc_tokens)
+    # Round-5 fix: truncate description to model's max_len to avoid
+    # pos_embedding IndexError. Descriptions for longer pieces exceed
+    # the 512 position-embedding limit. Truncating to max_len-1 keeps
+    # the first N tokens (per-bar structure is preserved).
+    model_max_len = lm_config.get("max_len", 512)
+    if len(desc_ids) > model_max_len - 1:
+        print(f"Truncating description {len(desc_ids)} -> {model_max_len - 1} (max_len)")
+        desc_ids = desc_ids[: model_max_len - 1]
     desc_tensor = torch.tensor([desc_ids], dtype=torch.long, device=device)
     print(f"Description: {len(desc_tokens)} tokens ({len(desc_ids)} IDs)")
 
