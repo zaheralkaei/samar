@@ -61,6 +61,24 @@ def main():
         help="Max generation length. Default: 256 (matches training context_size).",
     )
     parser.add_argument(
+        "--temperature", type=float, default=1.0,
+        help="Sampling temperature. 0 = greedy argmax, >1 = more random. Default: 1.0.",
+    )
+    parser.add_argument(
+        "--top-k", type=int, default=0,
+        help="Keep only the top-k tokens when sampling. 0 disables. Default: 0.",
+    )
+    parser.add_argument(
+        "--top-p", type=float, default=0.0,
+        help="Nucleus sampling: keep tokens with cumulative prob <= top_p. "
+             "0 disables. Default: 0.",
+    )
+    parser.add_argument(
+        "--no-vae-decode", action="store_true",
+        help="Disable the VAE-decode path (legacy argmax of latent-dim output). "
+             "Useful only for debugging; produces invalid token IDs.",
+    )
+    parser.add_argument(
         "--output-xml", default="generated.xml",
         help="Where to write the generated MusicXML. Default: generated.xml.",
     )
@@ -150,7 +168,15 @@ def main():
     print(f"Description: {len(desc_tokens)} tokens ({len(desc_ids)} IDs)")
 
     # === Sample event tokens from Transformer ===
+    # The transformer outputs next-step LATENT predictions
+    # (``[B, T, latent_dim]``), not vocab logits. To get event tokens we
+    # pass the predicted latent through the VAE decoder to get
+    # ``[B, vocab_size]`` logits, then sample with the requested
+    # temperature / top-k / top-p. This is the round-6 architectural
+    # fix -- the old ``argmax`` path on the latent-dim output
+    # produced invalid token IDs (the round-3 audit documented this).
     start_bar_token = torch.tensor([[vocab.to_i("Bar_0")]], device=device)
+    vae_decoder = None if args.no_vae_decode else vae.decoder
 
     with torch.no_grad():
         gen_token_ids = lm.sample(
@@ -159,6 +185,10 @@ def main():
             description=desc_tensor,
             max_length=args.max_length,
             pad_id=getattr(vocab, "pad_id", None),
+            temperature=args.temperature,
+            top_k=args.top_k,
+            top_p=args.top_p,
+            vae_decoder=vae_decoder,
         )
 
     # === Decode generated tokens into REMI+ events ===

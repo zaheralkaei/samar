@@ -93,24 +93,85 @@ class SamarTransformer(nn.Module):
         latent_output = self.output_layer(output)
         return latent_output
 
-    def sample(self, start_tokens, latent=None, max_length=256, pad_id=None, description=None):
-        """Greedy autoregressive decode.
+    def sample(self, start_tokens, latent=None, max_length=256, pad_id=None,
+               description=None, temperature=1.0, top_k=0, top_p=0.0,
+               vae_decoder=None):
+        """Autoregressive decode with temperature / top-k / top-p sampling.
 
-        ``description`` (optional) is a ``[1, T_desc]`` tensor of description
-        token IDs that conditions the generation. Pass it when you want to
-        steer the output (e.g. with a specific time-signature / key /
-        note-density profile). See ``SamarTransformer.forward`` for the
-        conditioning path.
+        The model outputs ``[seq_len, batch, latent_dim]`` (next-step latent
+        predictions, not event-vocab logits). To get event tokens:
+
+        - If ``vae_decoder`` is provided, the predicted latent at each step is
+          passed through ``vae_decoder`` to get vocab logits, then sampled
+          with the requested temperature / top-k / top-p.
+        - Otherwise (legacy behaviour), we fall back to ``argmax`` of the
+          latent-dim output. This produces invalid token IDs because the
+          model was trained to predict latents, not tokens -- the round-3
+          audit documented this architectural inconsistency.
+
+        Parameters
+        ----------
+        start_tokens : [1, T] long
+            Already-generated prefix. Generation starts AFTER these tokens.
+        latent : [1, T_lat, latent_dim], optional
+            Seed latent broadcast across the generation length.
+        description : [1, T_desc] long, optional
+            Per-bar description tokens (see ``forward``).
+        temperature : float, default 1.0
+            ``>1.0`` -> more random, ``<1.0`` -> more deterministic.
+            ``0.0`` is treated as greedy (argmax).
+        top_k : int, default 0
+            Keep only the top-k logits before sampling. ``0`` disables.
+        top_p : float, default 0.0
+            Nucleus sampling -- keep the smallest set of tokens whose
+            cumulative probability >= top_p. ``0.0`` disables.
+        vae_decoder : callable, optional
+            ``vae_decoder(latent) -> [B, T, vocab_size] logits``.
+            If provided, used to project the predicted latent to vocab logits.
         """
         self.eval()
-        generated = start_tokens  # shape: [1, T]
+        generated = start_tokens
         for _ in range(max_length - start_tokens.size(1)):
-            logits = self(generated, latent=latent, description=description)  # [seq_len, batch, dim]
-            logits = logits.permute(1, 0, 2)  # [batch, seq_len, dim]
-            next_token_logits = logits[:, -1, :]  # last token
-            next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)  # greedy decode
-            generated = torch.cat([generated, next_token], dim=1)
+            output = self(generated, latent=latent, description=description)
+            output = output.permute(1, 0, 2)  # [B, T, dim]
+            next_step = output[:, -1, :]      # [B, dim]
 
+            if vae_decoder is not None:
+                # Project latent -> vocab logits and sample.
+                logits = vae_decoder(next_step)  # [B, vocab_size]
+                if temperature <= 0.0:
+                    next_token = torch.argmax(logits, dim=-1, keepdim=True)
+                else:
+                    logits = logits / max(temperature, 1e-6)
+                    if top_k > 0:
+                        k = min(top_k, logits.size(-1))
+                        values, _ = torch.topk(logits, k, dim=-1)
+                        threshold = values[:, -1:].expand_as(logits)
+                        logits = torch.where(
+                            logits < threshold,
+                            torch.full_like(logits, float("-inf")),
+                            logits,
+                        )
+                    if top_p > 0.0:
+                        sorted_logits, sorted_idx = torch.sort(
+                            logits, descending=True, dim=-1)
+                        probs = torch.softmax(sorted_logits, dim=-1)
+                        cum = torch.cumsum(probs, dim=-1)
+                        # Remove tokens with cumulative prob > top_p
+                        mask = cum - probs > top_p
+                        sorted_logits = sorted_logits.masked_fill(
+                            mask, float("-inf"))
+                        logits = torch.zeros_like(logits).scatter_(
+                            -1, sorted_idx, sorted_logits)
+                    probs = torch.softmax(logits, dim=-1)
+                    next_token = torch.multinomial(
+                        probs, num_samples=1)  # [B, 1]
+            else:
+                # Legacy path: argmax of latent-dim output (produces
+                # invalid token IDs but kept for backwards compat).
+                next_token = torch.argmax(next_step, dim=-1, keepdim=True)
+
+            generated = torch.cat([generated, next_token], dim=1)
             if pad_id is not None and next_token.item() == pad_id:
                 break
         return generated
