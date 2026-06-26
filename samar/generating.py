@@ -115,11 +115,13 @@ def main():
 
     sample = latent_data[args.latent_index]
     seed_latent = sample["latent"].to(device)
-    if seed_latent.dim() == 2:
-        # [T, latent_dim] -> [1, 1, latent_dim] so the model can broadcast
-        seed_latent = seed_latent.unsqueeze(0).unsqueeze(1)
-    elif seed_latent.dim() == 1:
+    if seed_latent.dim() == 1:
+        # [latent_dim] -> [1, 1, latent_dim]
         seed_latent = seed_latent.unsqueeze(0).unsqueeze(0)
+    elif seed_latent.dim() == 2:
+        # [T, latent_dim] -> [1, T, latent_dim]
+        seed_latent = seed_latent.unsqueeze(0)
+    # dim() == 3 already in correct [B, T, latent_dim] shape
     print(f"Using latent from file: {sample['file']} (index {args.latent_index})")
 
     # === Description: either from XML file or from the latent sample ===
