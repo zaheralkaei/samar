@@ -501,6 +501,16 @@ class SAMARInputRepresentation:
 
         notes_by_bar = self._notes_by_bar()
         for bar_num in sorted(notes_by_bar.keys()):
+            # Round-7: emit explicit Bar_N token at the start of each
+            # bar (matches FIGARO's input_representation.get_remi_events
+            # at figaro/src/input_representation.py:297-302). Without
+            # this, SAMAR's event stream has NO bar-boundary markers
+            # and the model never learns to generate them -- which is
+            # why round-6 examples jammed all 256 tokens into measure 0
+            # and MuseScore rendered empty bars. The round-7
+            # reconstructor renumbers Bar_0 -> measure 1 etc. so
+            # MuseScore displays 1-indexed measure numbers.
+            events.append(f"{BAR_KEY}_{bar_num}")
             for note in notes_by_bar[bar_num]:
                 rel_tick = note.start_tick % ticks_per_bar
                 position = int(rel_tick / ticks_per_bar * positions_per_bar)
