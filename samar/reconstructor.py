@@ -151,7 +151,12 @@ def reconstruct_musicxml_from_events(input_or_events, output_xml_path: str):
         current_tick = 0
         last_tick = 0
         current_time_signature = None
-        bar_offset = None
+        # Round-9: bar_offset was used to remap Bar_N (vocab index) to a
+        # 1-based measure number, but that broke when the model emitted
+        # Bar tokens out of order (e.g. Bar_397 then Bar_195). The fix is
+        # to count Bar tokens in sequence instead of using raw values:
+        # first Bar_ -> measure 1, second -> measure 2, etc.
+        bar_count = 0
 
         def _advance_last_tick():
             """Update last_tick based on note_buffer after a note is flushed."""
@@ -181,10 +186,12 @@ def reconstruct_musicxml_from_events(input_or_events, output_xml_path: str):
                         _advance_last_tick()
                         note_buffer.clear()
 
-                raw_bar = int(ev[len(BAR_KEY)+1:])
-                if bar_offset is None:
-                    bar_offset = raw_bar - 1  # Bar_0 -> measure 1 (MuseScore-friendly)
-                current_bar = raw_bar - bar_offset
+                # Round-9: count Bar tokens sequentially. Bar_N is the
+                # token's vocab index (0-511), NOT a measure number. The
+                # Arabic and MIDI training data both emit Bar tokens in
+                # sequence, so the i-th Bar token = measure i+1 (1-based).
+                bar_count += 1
+                current_bar = bar_count
                 current_tick = 0
                 last_tick = 0
 
