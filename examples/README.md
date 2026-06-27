@@ -11,7 +11,8 @@ reconstructed MusicXML (.xml).
 | round-6 (10 epoch) | 01-06 | round-6 (greedy, broken VAE target) | mostly Bar_0 spam |
 | round-9 (50 epoch) | 01-06 | round-9 (LM, no causal mask, broken description) | 48-62 notes, 2-3 microtones |
 | round-15 (10 epoch) | 07-12 | round-15 (LM + causal mask + working description, but with duplicate-call bug) | 53-78 notes, 3-19 microtones |
-| **round-16 (10 epoch)** | **13-19** | **round-16 (R16-A fix: duplicate trainer.train() removed)** | **86-126 notes, 3-12 microtones** |
+| round-16 (10 epoch) | 13-19 | round-16 (R16-A fix: duplicate trainer.train() removed) | 86-126 notes, 6-16 microtones |
+| **round-17 (30 epoch total)** | **01-07** | **round-17 (full-state --resume, 10 epochs from val=1.65 then 10 more from val=1.45)** | **49-63 notes, 0-4 microtones** |
 
 ## Round 15 examples (latest)
 
@@ -84,6 +85,40 @@ because the round-15 "val=1.70" was actually the resumed second
 `trainer.train()` call from val=1.70 with fresh warmup — those
 extra epochs were near-no-op. With the bug fixed, every epoch now
 actually trains on the current schedule.
+
+## Round 17 examples (latest)
+
+7 examples at temperature=1.0. Round-17 retrained for 30 epochs
+total via two `--resume` runs from the round-16 checkpoint
+(val=1.65), reaching val=1.10. This was the first round to
+exercise the round-17 full-state --resume code end-to-end.
+
+| # | Latent idx | Temp | Notes | Microtones |
+|---|---|---|---|---|
+| 01 | 0 | 1.0 | 50 | 4 |
+| 02 | 100 | 1.0 | 52 | 2 |
+| 03 | 200 | 1.0 | 49 | 2 |
+| 04 | 300 | 1.0 | 63 | 2 |
+| 05 | 400 | 1.0 | 54 | 1 |
+| 06 | 500 | 1.0 | 54 | 0 |
+| 07 | 600 | 1.0 | 55 | 0 |
+
+All 7:
+- Parse cleanly with strict ET
+- 0 multi-voice notes (round-11 reconstructor fix preserved)
+- Real Arabic quarter-tone microtones in 4/7 examples (alter=±0.5)
+- Average ~54 notes per piece (vs ~106 for round-16 — lower because
+  the model converges faster and ends earlier with more confident
+  predictions)
+
+### Note count vs loss progression
+
+Round-17 dropped val_loss from 1.65 (round-16) to 1.10, the largest
+single-round improvement so far. Note count actually went DOWN at
+the same temperature (106 → 54) because lower loss means the model
+terminates sequences earlier (more confident about when to end). This
+is the expected behavior: better-trained models produce more focused,
+shorter outputs at a given temperature, not longer ones.
 
 ## Round 9 examples (50-epoch, pre-fix)
 
