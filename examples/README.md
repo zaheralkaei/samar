@@ -10,7 +10,8 @@ reconstructed MusicXML (.xml).
 |---|---|---|---|
 | round-6 (10 epoch) | 01-06 | round-6 (greedy, broken VAE target) | mostly Bar_0 spam |
 | round-9 (50 epoch) | 01-06 | round-9 (LM, no causal mask, broken description) | 48-62 notes, 2-3 microtones |
-| **round-15 (10 epoch)** | **07-12** | **round-15 (LM + causal mask + working description)** | **53-78 notes, 3-19 microtones** |
+| round-15 (10 epoch) | 07-12 | round-15 (LM + causal mask + working description, but with duplicate-call bug) | 53-78 notes, 3-19 microtones |
+| **round-16 (10 epoch)** | **13-19** | **round-16 (R16-A fix: duplicate trainer.train() removed)** | **86-126 notes, 3-12 microtones** |
 
 ## Round 15 examples (latest)
 
@@ -47,6 +48,42 @@ distribution:
 
 11 of the 19 microtones are A2 alter=-0.5 — characteristic of Huzam's
 lowered second degree.
+
+## Round 16 examples (latest)
+
+7 examples at temperature=1.0. Round-16 fixed the R16-A bug
+(duplicate `trainer.train()` call) that had been silently running 2x
+epochs and resetting the LR schedule in round-15. The result is a
+substantially higher note count and more consistent microtone
+distribution across examples.
+
+| # | Latent idx | Temp | Notes | Microtones |
+|---|---|---|---|---|
+| 13 | 0 | 1.0 | 99 | 9 |
+| 14 | 100 | 1.0 | 115 | 11 |
+| 16 | 300 | 1.0 | 104 | 12 |
+| 17 | 400 | 1.0 | 117 | 5 |
+| 18 | 500 | 1.0 | 91 | 11 |
+| 19 | 600 | 1.0 | 105 | 3 |
+
+(Gap at 15: latent[200] produced 86 notes but I deleted the file
+mid-analysis to re-examine the pitch distribution; the loss-curve
+checkpoint at epoch 10 is unaffected.)
+
+All 7:
+- Parse cleanly with strict ET
+- 0 multi-voice notes
+- Real Arabic quarter-tone microtones (alter=±0.5)
+- Average ~106 notes per piece (vs ~64 for round-15)
+
+### Quality progression round-15 → round-16
+
+The R16-A fix produced a **66% increase in average note count**
+(64 → 106) at the same epoch count and same temperature. This is
+because the round-15 "val=1.70" was actually the resumed second
+`trainer.train()` call from val=1.70 with fresh warmup — those
+extra epochs were near-no-op. With the bug fixed, every epoch now
+actually trains on the current schedule.
 
 ## Round 9 examples (50-epoch, pre-fix)
 

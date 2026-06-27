@@ -1,0 +1,113 @@
+{
+  "1_load": {
+    "missing": 0,
+    "unexpected": 0,
+    "desc_emb_size": 837,
+    "desc_vocab_size": 837,
+    "desc_emb_matches_desc_vocab": true,
+    "PASS": true
+  },
+  "2_causality": {
+    "max_diff_positions_0_to_T-2": 0.0,
+    "diff_at_T-1": 1.682115077972412,
+    "PASS": true
+  },
+  "3_sample": {
+    "gen_shape": [
+      1,
+      30
+    ],
+    "gen_length_30": true,
+    "PASS": true
+  },
+  "4_desc_unk": {
+    "unk_rate": 0.0,
+    "description_shape": [
+      8,
+      512
+    ],
+    "PASS": true
+  },
+  "5_latent_len": {
+    "checked": 50,
+    "mismatches": 0,
+    "PASS": true
+  },
+  "6_roundtrip": {
+    "input": [
+      "Bar_0",
+      "Position_0",
+      "Pitch_24EDO_60",
+      "Duration_8",
+      "Instrument_Piano"
+    ],
+    "ids": [
+      5,
+      954,
+      910,
+      670,
+      682
+    ],
+    "decoded": [
+      "Bar_0",
+      "Position_0",
+      "Pitch_24EDO_60",
+      "Duration_8",
+      "Instrument_Piano"
+    ],
+    "PASS": true
+  },
+  "7_smoke": {
+    "trainer_importable": true,
+    "PASS": true
+  },
+  "8_cli_help": {
+    "returncode": 0,
+    "has_num_epochs": true,
+    "has_lr": true,
+    "has_context": true,
+    "PASS": true
+  },
+  "9_dup_calls": {
+    "trainer_train_call_count": 1,
+    "call_lines": [
+      [
+        427,
+        "    trainer.train(num_epochs=args.num_epochs)"
+      ]
+    ],
+    "PASS": true
+  },
+  "10_hygiene": {
+    "files_checked": [
+      "samar/train_samar_transformer.py",
+      "samar/models/samar_transformer.py",
+      "samar/dataset.py",
+      "samar/core.py",
+      "samar/vocab.py",
+      "samar/tokenizer.py",
+      "samar/precompute_samar_latents.py"
+    ],
+    "issues": [],
+    "PASS": true
+  },
+  "11_stale": {
+    "stale_count_first_200": 0,
+    "stale_samples": [],
+    "PASS": true
+  },
+  "12_desc_len": {
+    "checked": 100,
+    "max_desc_len": 512,
+    "model_max_len": 512,
+    "truncated_count": 0,
+    "PASS": true
+  },
+  "13_unk_rate": {
+    "checked_samples": 100,
+    "unk_count": 0,
+    "total_tokens": 51100,
+    "unk_rate": 0.0,
+    "PASS": true
+  }
+}
