@@ -135,12 +135,32 @@ class SamarLatentDataset(Dataset):
     every sample has length exactly ``context_size``.
     """
 
-    def __init__(self, latent_path, context_size=256, tokenizer=None):
+    def __init__(self, latent_path, context_size=256, tokenizer=None, min_keep_len=None):
         self.context_size = context_size
         self.samples = torch.load(latent_path)
         self.tokenizer = tokenizer or SamarTokenizer.load(_TOKENIZER_PATH)
         self.pad_id = self.tokenizer.get_vocab().pad_id
 
+        # Round-12 audit: drop samples whose token length is below
+        # ``min_keep_len`` (default: ``context_size // 2``). The previous
+        # behavior right-padded short samples to ``context_size`` with
+        # ``pad_id``, which means a 154-token sample becomes 40% pad
+        # (102 zeros). The loss is correctly masked via ``ignore_index=0``
+        # so training is not directly affected, but the model's positional
+        # embeddings at those padding positions are never updated -- they
+        # stay at random init. After deleting ``Hello.xml`` / ``Hello2.xml``
+        # (the only sub-256 samples in the corpus), this filter is a no-op
+        # for ``latents.pt`` but protects against future regressions where
+        # a new short file sneaks in.
+        if min_keep_len is None:
+            min_keep_len = context_size // 2
+        n_before = len(self.samples)
+        self.samples = [s for s in self.samples if len(s["tokens"]) >= min_keep_len]
+        n_after = len(self.samples)
+        if n_before != n_after:
+            print(f"[SamarLatentDataset] Filtered {n_before - n_after} samples "
+                  f"shorter than {min_keep_len} tokens "
+                  f"({n_before} -> {n_after} samples)")
         # Detect-and-warn about stale latents (pre-round-2 corruption
                 # shows up as a high <unk> ratio). Round-3 audit M4.
         unk_id = self.tokenizer.get_vocab().to_i(UNK_TOKEN)

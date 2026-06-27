@@ -30,7 +30,7 @@ class GroupEmbedding(nn.Module):
         return self.proj(emb)  # [batch_size, seq_len, out_dim]
 
 class SamarTransformer(nn.Module):
-    def __init__(self, d_model, n_head, num_layers, dim_feedforward, dropout, vocab_size, latent_dim, max_len=512):
+    def __init__(self, d_model, n_head, num_layers, dim_feedforward, dropout, vocab_size, latent_dim, max_len=512, desc_vocab_size=None):
         super(SamarTransformer, self).__init__()
 
         self.d_model = d_model
@@ -50,7 +50,21 @@ class SamarTransformer(nn.Module):
         # distributions -- mean pitch / note density / bar tokens behave nothing
         # like 24-EDO pitch / bar / position tokens. Sharing weights would let
         # the description-side vocabulary "eat" the event embedding capacity.
-        self.description_embedding = nn.Embedding(vocab_size, d_model)
+        #
+        # Round-12 audit: ``description_embedding`` is sized to the
+        # ``DescriptionVocab`` (837 tokens) rather than ``vocab_size`` (1254,
+        # the event vocab). The previous ``nn.Embedding(vocab_size, d_model)``
+        # wasted 33% of description-side capacity: IDs 837..1253 were never
+        # reachable from ``DescriptionTokenizer`` so those rows stayed at
+        # random init forever. ``desc_vocab_size`` defaults to
+        # ``len(DescriptionVocab())`` at __init__ time and can be overridden
+        # for backwards compatibility with old checkpoints (see
+        # ``from_pretrained``).
+        from ..vocab import DescriptionVocab
+        default_desc_vocab_size = len(DescriptionVocab())
+        if desc_vocab_size is None:
+            desc_vocab_size = default_desc_vocab_size
+        self.description_embedding = nn.Embedding(desc_vocab_size, d_model)
         self.latent_embedding = nn.Linear(latent_dim, d_model)
 
         # Positional encoding. Max length 512 matches ``MAX_N_BARS`` so we can
@@ -76,65 +90,148 @@ class SamarTransformer(nn.Module):
         # uses the raw logits directly.
         self.output_layer = nn.Linear(d_model, vocab_size)
 
-    def forward(self, input_ids, latent=None, description=None, tgt=None):
-        """Round-8 forward pass.
+    def forward(self, input_ids, latent=None, description=None, tgt=None, enc_output=None):
+            """Forward pass.
 
-        Architectural change from round-7:
+            Architecture (round-12 architectural fix):
 
-        - ``src`` (encoder input) = description + input_ids + pos_embedding
-        - ``tgt`` (decoder input) = input_ids + pos_embedding (autoregressive
-          shift handled by the caller via the ``labels`` field, so the
-          decoder sees the *prefix* up to step t-1 and predicts step t)
-        - ``latent`` is added to the decoder input as a per-step style
-          conditioning signal (broadcast over the sequence length)
-        - ``output_layer`` projects to vocab_size directly so the output
-          IS the token distribution at each step
+            - ``src`` (encoder input) = description ONLY + pos_embedding.
+              The encoder is bidirectional over the per-bar description
+              tokens (Bar_N, TimeSignature, MeanPitch, ...) so every
+              description position can attend to every other.
+            - ``tgt`` (decoder input) = input_ids (event tokens) + pos_embedding.
+              The decoder self-attention is masked causal so position t
+              cannot see positions > t. This makes the model a proper
+              autoregressive language model.
+            - Cross-attention: decoder attends to encoder output (the
+              encoded description context). This is the standard seq2seq
+              pattern from FIGARO.
+            - ``latent`` is added to the decoder input as a per-step bias
+              for style conditioning.
 
-        Round-7 had the decoder take the LATENT as its target input,
-        which meant the model was a latent->vocab mapper, not an
-        autoregressive LM. This is the round-8 root-cause fix.
-        """
-        B, T = input_ids.size()
-        src = self.token_embedding(input_ids)
-        pos_ids = torch.arange(T, device=input_ids.device).unsqueeze(0).expand(B, -1)
-        src = src + self.pos_embedding(pos_ids)
+            Round-12 audit fixes the round-8 leak where the encoder was
+            fed ``description + events`` bidirectionally. That made the
+            encoder output at position 0 encode information about future
+            event tokens, which leaked through cross-attention and let
+            the decoder peek at the answer during training. With the
+            encoder now restricted to description, the only path from
+            events to decoder outputs is the causal decoder self-attention.
 
-        if description is not None:
-            B_d, T_d = description.size()
-            desc_emb = self.description_embedding(description)
-            desc_pos_ids = torch.arange(T_d, device=description.device).unsqueeze(0).expand(B_d, -1)
-            desc_emb = desc_emb + self.pos_embedding(desc_pos_ids)
-            src = torch.cat([desc_emb, src], dim=1)
+            Round-8 had previously fixed the round-7 latent-as-target
+            mistake (the model was a latent->vocab mapper, not an LM).
 
-        # Round-8: decoder target = input_ids (autoregressive), not
-        # latent. The caller handles the shift via labels (predict t+1
-        # from t). The latent is added as a per-step bias to the
-        # decoder input for style conditioning.
-        if tgt is None:
-            tgt = self.token_embedding(input_ids)
-            tgt = tgt + self.pos_embedding(pos_ids)
-        if latent is not None:
-            # Broadcast latent over the sequence length and add it.
-            # latent shape: [B, T_latent, latent_dim] -> [B, 1, d_model]
-            latent_emb = self.latent_embedding(latent)  # [B, T_lat, d_model]
-            if latent_emb.size(1) == 1:
-                # Already a single style vector, broadcast over T.
-                tgt = tgt + latent_emb
-            elif latent_emb.size(1) == tgt.size(1):
-                # Same length, add per-step.
-                tgt = tgt + latent_emb
+            ``enc_output`` (round-12): if provided, skip the encoder and
+            use this precomputed encoder output directly. ``sample()`` uses
+            this to compute the encoder output ONCE on the static
+            description, then reuses it across all sampling steps.
+            ``enc_output`` shape: [T_src, B, d_model].
+            """
+            B, T = input_ids.size()
+
+            # === Encoder src = description only (bidirectional) ===
+            if enc_output is not None:
+                # Use the cached encoder output. Sample() passes this.
+                src = enc_output  # [T_src, B, d_model]
+                # src is already [T, B, d_model] (i.e. already permuted).
+                # We skip the permute below for this branch.
+                skip_permute = True
             else:
-                # Mismatched lengths: use the mean latent as a
-                # global style vector.
-                tgt = tgt + latent_emb.mean(dim=1, keepdim=True)
+                skip_permute = False
+                if description is not None:
+                    B_d, T_d = description.size()
+                    desc_emb = self.description_embedding(description)
+                    desc_pos_ids = torch.arange(T_d, device=description.device).unsqueeze(0).expand(B_d, -1)
+                    src = desc_emb + self.pos_embedding(desc_pos_ids)
+                else:
+                    # No description provided (e.g. MIDI samples that have
+                    # ``description=None``). Use a single dummy "no-context"
+                    # token so the encoder still produces an output the
+                    # decoder can attend to. We use the ``token_embedding(0)``
+                    # row (which is the <pad> row) as a neutral placeholder.
+                    placeholder = self.token_embedding(torch.zeros(B, 1, dtype=torch.long, device=input_ids.device))
+                    src = placeholder  # [B, 1, d_model]
 
-        src = src.permute(1, 0, 2)
-        tgt = tgt.permute(1, 0, 2)
+            # === Decoder tgt = event tokens (causal) ===
+            if tgt is None:
+                tgt = self.token_embedding(input_ids)
+                pos_ids = torch.arange(T, device=input_ids.device).unsqueeze(0).expand(B, -1)
+                tgt = tgt + self.pos_embedding(pos_ids)
 
-        output = self.transformer(src, tgt)
-        # Round-8: output is [T, B, d_model] -> [T, B, vocab_size]
-        logits = self.output_layer(output)
-        return logits
+            # === Add latent as per-step style bias to decoder input ===
+            if latent is not None:
+                # Broadcast latent over the sequence length and add it.
+                # latent shape: [B, T_latent, latent_dim] -> [B, 1, d_model]
+                latent_emb = self.latent_embedding(latent)  # [B, T_lat, d_model]
+                if latent_emb.size(1) == 1:
+                    # Already a single style vector, broadcast over T.
+                    tgt = tgt + latent_emb
+                elif latent_emb.size(1) == tgt.size(1):
+                    # Same length, add per-step.
+                    tgt = tgt + latent_emb
+                else:
+                    # Mismatched lengths: use the mean latent as a
+                    # global style vector.
+                    tgt = tgt + latent_emb.mean(dim=1, keepdim=True)
+
+            if not skip_permute:
+                src = src.permute(1, 0, 2)
+            # Always permute tgt -- even in the skip_permute branch where
+            # src is already in time-major [T, B, d_model] format, tgt still
+            # needs the [B, T, d_model] -> [T, B, d_model] swap to match
+            # nn.Transformer conventions.
+            tgt = tgt.permute(1, 0, 2)
+
+            # Round-12 audit: enforce causality on the decoder self-
+            # attention. Without this mask, position t can attend to
+            # position t+1 (and beyond), so the model learns to peek
+            # at the answer during training. At inference (``lm.sample``)
+            # the future tokens don't exist yet, so the learned
+            # distribution is off-policy.
+            #
+            # PyTorch's nn.Transformer requires the mask as a [T, T]
+            # tensor where masked positions are -inf.
+            # ``generate_square_subsequent_mask`` is the canonical
+            # upper-triangular -inf matrix.
+            T_dec = tgt.size(0)
+            causal_mask = nn.Transformer.generate_square_subsequent_mask(
+                T_dec, device=tgt.device
+            )
+
+            output = self.transformer(src, tgt, tgt_mask=causal_mask)
+            # Output is [T_dec, B, d_model] -> [T_dec, B, vocab_size]
+            logits = self.output_layer(output)
+            return logits
+
+    def _encode_description(self, description):
+        """Run the encoder on the static description, return the encoded
+        representation that the decoder cross-attends to.
+
+        Round-12 audit: called once per ``sample()`` invocation so the
+        encoder cost is amortized across all sampling steps. Returns
+        ``[T_src, B, d_model]`` (already in ``nn.Transformer`` time-major
+        format -- i.e. NOT batch-major).
+
+        ``description`` may be ``None`` (e.g. MIDI samples); we return a
+        single-token dummy encoder output (the ``<pad>`` row of
+        ``token_embedding``) so the decoder's cross-attention still has
+        a target.
+        """
+        if description is None:
+            # 1-token dummy. Use the encoder directly so we don't go
+            # through ``forward()`` (which would also build the decoder
+            # inputs we don't need here).
+            B = 1
+            placeholder = self.token_embedding(
+                torch.zeros(B, 1, dtype=torch.long, device=next(self.parameters()).device)
+            )
+            return self.transformer.encoder(placeholder.permute(1, 0, 2))
+
+        B_d, T_d = description.size()
+        desc_emb = self.description_embedding(description)
+        desc_pos_ids = torch.arange(T_d, device=description.device).unsqueeze(0).expand(B_d, -1)
+        src = desc_emb + self.pos_embedding(desc_pos_ids)
+        # ``nn.TransformerEncoder`` expects [T, B, d_model] (time-major).
+        return self.transformer.encoder(src.permute(1, 0, 2))
 
     def sample(self, start_tokens, latent=None, max_length=256, pad_id=None,
                description=None, temperature=1.0, top_k=0, top_p=0.0,
@@ -169,8 +266,20 @@ class SamarTransformer(nn.Module):
         """
         self.eval()
         generated = start_tokens
+
+        # Round-12 audit: pre-compute the encoder output ONCE on the
+        # static description, then reuse it across all sampling steps.
+        # The description doesn't change as we generate, so re-running
+        # the encoder every step is wasted compute. ``enc_output`` is
+        # the encoder's output (after self-attention over description)
+        # which the decoder cross-attends to.
+        enc_output = self._encode_description(description)
+
         for _ in range(max_length - start_tokens.size(1)):
-            logits = self(generated, latent=latent, description=description)
+            logits = self(
+                generated, latent=latent, description=description,
+                enc_output=enc_output,
+            )
             logits = logits.permute(1, 0, 2)  # [B, T, vocab_size]
             next_logits = logits[:, -1, :]    # [B, vocab_size]
 
@@ -280,12 +389,24 @@ class SamarTransformer(nn.Module):
             extended = _torch.zeros(new_size, old_emb.shape[1], dtype=old_emb.dtype)
             extended[:ckpt_vocab_size] = old_emb
             sd["token_embedding.weight"] = extended
-            # If the description embedding has the same shape, extend it too.
-            if "description_embedding.weight" in sd and sd["description_embedding.weight"].shape[0] == ckpt_vocab_size:
-                old_desc = sd["description_embedding.weight"]
-                ext_desc = _torch.zeros(new_size, old_desc.shape[1], dtype=old_desc.dtype)
-                ext_desc[:ckpt_vocab_size] = old_desc
-                sd["description_embedding.weight"] = ext_desc
+
+        # Round-12 audit: description_embedding. The checkpoint may have
+        # ``description_embedding.weight`` sized to the OLD description
+        # vocab (=event vocab_size=1254) while the new model uses
+        # ``len(DescriptionVocab())`` = 837. Three cases:
+        #   1. shapes match -- load directly.
+        #   2. ckpt larger (1254 -> 837): trim to first 837 rows.
+        #      We were never using the extra rows anyway.
+        #   3. ckpt smaller (e.g. 837 -> 837, no change): no-op.
+        # In all cases we never extend description_embedding -- it's
+        # already the correct size for the live DescriptionVocab.
+        if "description_embedding.weight" in sd:
+            ckpt_desc_size = sd["description_embedding.weight"].shape[0]
+            model_desc_size = model.description_embedding.weight.shape[0]
+            if ckpt_desc_size > model_desc_size:
+                sd["description_embedding.weight"] = (
+                    sd["description_embedding.weight"][:model_desc_size].clone()
+                )
 
         # Round-8: handle output_layer shape change. In round 7 and
         # earlier, output_layer was ``Linear(d_model, latent_dim)``

@@ -160,13 +160,56 @@ class DescriptionVocab(Vocab):
 
         self.tokens = (
             time_sig_tokens +
-            instrument_tokens + 
-            chord_tokens + 
-            density_tokens + 
-            velocity_tokens + 
-            pitch_tokens + 
-            duration_tokens + 
+            instrument_tokens +
+            chord_tokens +
+            density_tokens +
+            velocity_tokens +
+            pitch_tokens +
+            duration_tokens +
             bar_tokens
         )
         counter = Counter(self.tokens)
         super().__init__(counter)
+
+        # Round-12 audit: cross-vocab ID consistency check.
+        #
+        # ``DescriptionVocab`` and ``SamarVocab`` (event vocab) overlap on
+        # 716 strings (Bar_*, Chord_*, TimeSignature_*, Instrument_*) but
+        # assign DIFFERENT IDs because they sort differently. This is a
+        # latent landmine: if any code path encodes a description-side
+        # token with the event tokenizer (or vice versa), the wrong token
+        # comes out -- silently.
+        #
+        # The intended pattern (FIGARO two-stream) is to ALWAYS use the
+        # right tokenizer for the right stream. We warn at module-import
+        # time if any non-special token has a different ID in the two
+        # vocabs. (In practice the IDs always differ for the overlapping
+        # strings; the warning is the affordance -- if you see it, you
+        # know which tokens are at risk of cross-tokenizer confusion.)
+        try:
+            _event_vocab = SamarVocab()
+            _special_tokens = {PAD_TOKEN, UNK_TOKEN, BOS_TOKEN, EOS_TOKEN, MASK_TOKEN}
+            mismatches = []
+            for tok in self.tokens:
+                if tok in _special_tokens:
+                    continue
+                if tok in _event_vocab.stoi and _event_vocab.stoi[tok] != self.stoi[tok]:
+                    mismatches.append(
+                        (tok, self.stoi[tok], _event_vocab.stoi[tok])
+                    )
+            if mismatches:
+                # Only show the first few to avoid log spam.
+                sample = mismatches[:5]
+                msg = (
+                    f"[DescriptionVocab] {len(mismatches)} overlapping strings "
+                    f"have different IDs in SamarVocab vs DescriptionVocab "
+                    f"(e.g. {sample}). Cross-tokenizer use will mis-encode. "
+                    f"This is by-design per FIGARO two-stream split, but be "
+                    f"careful: always use SamarTokenizer for events and "
+                    f"DescriptionTokenizer for descriptions."
+                )
+                import warnings
+                warnings.warn(msg, stacklevel=2)
+        except Exception:
+            # Don't fail vocab construction if cross-check can't run.
+            pass

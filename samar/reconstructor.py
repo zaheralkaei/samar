@@ -97,6 +97,14 @@ def _flush_note_buffer(note_buffer, instrument_map, measures, part_map,
             step = min(step_map, key=lambda k: abs(semitone_exact - step_map[k]))
             alter_qtone = round((semitone_exact - step_map[step]) * 2) / 2.0
 
+            # Round-11 audit: clamp octave to valid MusicXML range [0..8].
+            # Out-of-range octaves are physically valid (some pitches
+            # cross MIDI's 0-127 range) but produce warnings or are
+            # rejected by strict parsers (MuseScore). The pitch token
+            # comes from the model's 24-EDO pitch vocabulary (0-191);
+            # a value like Pitch_24EDO_0 maps to MIDI 0 (C-1) which is
+            # outside the spec.
+            octave = max(0, min(8, octave))
             pitch_el = ET.SubElement(note_el, 'pitch')
             ET.SubElement(pitch_el, 'step').text = step
             if abs(alter_qtone) > 1e-6:
@@ -152,11 +160,16 @@ def reconstruct_musicxml_from_events(input_or_events, output_xml_path: str):
         current_tick = 0
         last_tick = 0
         current_time_signature = None
-        # Round-9: bar_offset was used to remap Bar_N (vocab index) to a
-        # 1-based measure number, but that broke when the model emitted
-        # Bar tokens out of order (e.g. Bar_397 then Bar_195). The fix is
-        # to count Bar tokens in sequence instead of using raw values:
-        # first Bar_ -> measure 1, second -> measure 2, etc.
+        # Round-9/11: bar_count tracks the sequential bar number. Earlier
+        # rounds (round-7) tried to remap Bar_N (vocab index) to a
+        # 1-based measure number via a ``bar_offset``, but that broke
+        # when the model emitted Bar tokens out of order (e.g. Bar_397
+        # then Bar_195). Round-9 fixed this by counting Bar tokens
+        # sequentially (first Bar_ -> measure 1, etc.). Round-11 audit
+        # removed a dead ``bar_offset`` reference in the "no Bar seen
+        # yet" branch -- the assignment was a no-op NameError waiting
+        # to fire for any generation that omitted the initial Bar_0
+        # token.
         bar_count = 0
 
         def _advance_last_tick():
@@ -206,8 +219,15 @@ def reconstruct_musicxml_from_events(input_or_events, output_xml_path: str):
                                 # Move overflow portion to new measure
                                 new_note = ET.SubElement(m_new, 'note')
                                 for child in last_note_el:
-                                    if child.tag != 'duration':
-                                        new_note.append(copy.deepcopy(child))
+                                    # Round-11 audit: skip duration (set
+                                    # below) AND voice (we add a single
+                                    # fresh one). Copying the original
+                                    # voice produces duplicate <voice>
+                                    # elements when this branch fires
+                                    # repeatedly for the same overflow.
+                                    if child.tag in ('duration', 'voice'):
+                                        continue
+                                    new_note.append(copy.deepcopy(child))
                                 ET.SubElement(new_note, 'duration').text = str(overflow)
                                 ET.SubElement(new_note, 'voice').text = '1'
                                 return
@@ -228,8 +248,11 @@ def reconstruct_musicxml_from_events(input_or_events, output_xml_path: str):
                                 # Add the note to the new measure
                                 new_note = ET.SubElement(m_new, 'note')
                                 for child in last_note_el:
-                                    if child.tag != 'duration':
-                                        new_note.append(copy.deepcopy(child))
+                                    # Round-11 audit: skip duration and
+                                    # voice (see comment above).
+                                    if child.tag in ('duration', 'voice'):
+                                        continue
+                                    new_note.append(copy.deepcopy(child))
                                 ET.SubElement(new_note, 'duration').text = str(orig_dur)
                                 ET.SubElement(new_note, 'voice').text = '1'
                                 last_tick = orig_dur
@@ -357,9 +380,16 @@ def reconstruct_musicxml_from_events(input_or_events, output_xml_path: str):
                 # in measure 1 (1-indexed for MuseScore). This
                 # happens for short generations or if the model
                 # skipped the Bar_0 token.
+                #
+                # Round-11 audit: removed the dead `bar_offset`
+                # reference here. The old code read `if bar_offset
+                # is None` then assigned `bar_offset = -1`, but
+                # `bar_offset` was never defined in this scope and
+                # `current_bar = 1` was set unconditionally anyway,
+                # so the branch was a no-op NameError waiting to fire
+                # for any generation that omitted the initial
+                # Bar_0 token. See commit log round-11.
                 if current_bar is None:
-                    if bar_offset is None:
-                        bar_offset = -1  # so Bar_0 -> 1
                     current_bar = 1
                     current_tick = 0
                     last_tick = 0
@@ -439,9 +469,17 @@ def reconstruct_musicxml_from_events(input_or_events, output_xml_path: str):
                             split_count += 1
                             new_note = ET.Element(child.tag)
                             if child.tag == 'note':
+                                # Round-11 audit: skip <voice> when copying.
+                                # The original note already has <voice>
+                                # (added by _flush_note_buffer); appending
+                                # a second one produces malformed XML when
+                                # the same overflow fragment is split again
+                                # in a later iteration. MusicXML allows at
+                                # most one <voice> per <note>.
                                 for c2 in child:
-                                    if c2.tag != 'duration':
-                                        new_note.append(copy.deepcopy(c2))
+                                    if c2.tag in ('duration', 'voice'):
+                                        continue
+                                    new_note.append(copy.deepcopy(c2))
                                 ET.SubElement(new_note, 'duration').text = str(overflow)
                                 ET.SubElement(new_note, 'voice').text = '1'
                             else:
