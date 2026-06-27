@@ -42,3 +42,5 @@ Thumbs.db
 
 # Local backups (preserved on disk for rollback, not tracked in repo)
 backups/
+checkpoints/samar_transformer.pt
+checkpoints/samar_transformer_best.pt
