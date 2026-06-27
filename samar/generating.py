@@ -86,6 +86,17 @@ def main():
         "--output-events", default="generated_events.txt",
         help="Where to write the generated event tokens. Default: generated_events.txt.",
     )
+    parser.add_argument(
+        "--checkpoint", default="checkpoints/samar_transformer.pt",
+        help="Path to transformer checkpoint. Default: checkpoints/samar_transformer.pt "
+             "(Arabic-trained). For MIDI-trained model, pass "
+             "checkpoints/samar_transformer_midi.pt.",
+    )
+    parser.add_argument(
+        "--latent-path", default="latents/latents.pt",
+        help="Path to latents.pt to use as seed. Default: latents/latents.pt (Arabic). "
+             "For MIDI samples, pass latents/midi_latents.pt.",
+    )
     args = parser.parse_args()
 
     # === Load tokenizer + vocab ===
@@ -105,8 +116,8 @@ def main():
     vae.to(device).eval()
 
     # === Load Transformer (warm-starts missing layers automatically) ===
-    lm_ckpt = _resolve_path("checkpoints/samar_transformer.pt")
-    config_path = _resolve_path("checkpoints/samar_transformer_config.json")
+    lm_ckpt = _resolve_path(args.checkpoint)
+    config_path = _resolve_path(args.checkpoint.replace(".pt", "_config.json"))
     with open(config_path) as f:
         lm_config = json.load(f)
 
@@ -120,7 +131,7 @@ def main():
     lm.to(device).eval()
 
     # === Load latent + description ===
-    latent_path = _resolve_path("latents/latents.pt")
+    latent_path = _resolve_path(args.latent_path)
     latent_data = torch.load(latent_path, map_location=device, weights_only=False)
     if not latent_data:
         print("ERROR: latents.pt is empty. Run "
