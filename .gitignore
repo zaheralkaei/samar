@@ -39,3 +39,6 @@ generated_events.txt
 # OS
 .DS_Store
 Thumbs.db
+
+# Local backups (preserved on disk for rollback, not tracked in repo)
+backups/

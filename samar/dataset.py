@@ -1,63 +1,110 @@
 # -*- coding: utf-8 -*-
 """
-Created on Sun Apr 20 01:54:36 2025
+PyTorch Datasets/DataLoaders for SAMAR.
 
-@author: zaher
+Round 18: Added BOS/EOS wrapping, bar_ids, position_ids. Dropped VQ-VAE
+latent support. Aligned with FIGARO's dataset.py patterns.
 """
-
-# === File: samar/dataset.py ===
-# PyTorch Datasets/DataLoaders for raw & latent sequences
 
 import os
 import glob
 import torch
 from torch.utils.data import Dataset, DataLoader
+from torch.nn.utils.rnn import pad_sequence
+
 from .input_representation import SAMARInputRepresentation
-from .tokenizer import SamarTokenizer
-from .constants import UNK_TOKEN
-# Load the default vocab pickle sitting next to this package's __init__.py.
-# NOTE: the original pickle was built when the codebase was flat (vocab.py at
-# the project root) and is not yet regenerated. Loading it at import time
-# would re-trigger a stale relative import. We expose a lazy ``tokenizer``
-# attribute that loads on first access and caches the result.
-import os as _os, pickle as _pickle
-_TOKENIZER_PATH = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "samar_vocab.pkl")
+from .tokenizer import SamarTokenizer, DescriptionTokenizer
+from .constants import (
+    UNK_TOKEN, BAR_KEY, POSITION_KEY, BOS_TOKEN, EOS_TOKEN, PAD_TOKEN,
+)
+
+_TOKENIZER_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "samar_vocab.pkl"
+)
+
 
 def _load_default_tokenizer():
-    # Load the pickle in a controlled namespace so its stale ``vocab`` module
-    # reference resolves to the current samar.vocab class.
-    import sys as _sys, types as _types
-    pkg_dir = _os.path.dirname(_os.path.abspath(__file__))
+    import sys as _sys
+    pkg_dir = os.path.dirname(os.path.abspath(__file__))
     if pkg_dir not in _sys.path:
         _sys.path.insert(0, pkg_dir)
-    # Pre-import and alias so pickle finds the class under its old module name
     from . import vocab as _vocab_mod
     _sys.modules.setdefault("vocab", _vocab_mod)
     return SamarTokenizer.load(_TOKENIZER_PATH)
 
-tokenizer = None  # populated on first access via ``get_tokenizer()``
+
+_tokenizer_singleton = None
 
 def get_tokenizer():
-    global tokenizer
-    if tokenizer is None:
-        tokenizer = _load_default_tokenizer()
-    return tokenizer
+    global _tokenizer_singleton
+    if _tokenizer_singleton is None:
+        _tokenizer_singleton = _load_default_tokenizer()
+    return _tokenizer_singleton
 
-# Dataset class for processing SAMAR MusicXML files into token sequences
+
+def compute_structural_ids(events):
+    """Compute bar_ids and position_ids from a list of event strings.
+
+    Returns two lists of ints the same length as `events`.
+    - bar_ids: cumulative bar counter (0 for BOS/EOS, increments on Bar_ tokens)
+    - position_ids: within-bar position (from Position_ tokens, carried forward)
+
+    Shared between dataset, precompute, and generation to avoid divergence.
+    """
+    bar_ids = []
+    position_ids = []
+    cur_bar = 0
+    cur_pos = 0
+    for ev in events:
+        if ev == BOS_TOKEN:
+            cur_bar = 0
+            cur_pos = 0
+        elif ev == EOS_TOKEN:
+            pass  # keep current bar/pos
+        elif ev.startswith(f"{BAR_KEY}_"):
+            cur_bar += 1
+            cur_pos = 0
+        elif ev.startswith(f"{POSITION_KEY}_"):
+            try:
+                cur_pos = int(ev.split("_")[-1])
+            except ValueError:
+                pass
+        bar_ids.append(cur_bar)
+        position_ids.append(cur_pos)
+    return bar_ids, position_ids
+
+
+def compute_desc_bar_ids(desc_tokens):
+    """Compute bar_ids for description tokens.
+
+    Each Bar_N token increments the counter. Non-bar tokens inherit
+    the current bar. Used for the encoder's bar_embedding.
+    """
+    bar_ids = []
+    cur_bar = 0
+    for tok in desc_tokens:
+        if tok.startswith(f"{BAR_KEY}_"):
+            cur_bar += 1
+        bar_ids.append(cur_bar)
+    return bar_ids
+
+
 class SAMARDataset(Dataset):
-    def __init__(self, data_dir, context_size=256, max_files=-1, min_chunk_len=8, tokenizer=None):
+    """Dataset that parses MusicXML files on the fly.
+
+    Round 18: wraps event sequences with BOS/EOS, computes bar_ids and
+    position_ids per token.
+    """
+
+    def __init__(self, data_dir, context_size=256, max_files=-1,
+                 min_chunk_len=8, tokenizer=None):
         self.data_dir = data_dir
         self.context_size = context_size
         self.min_chunk_len = min_chunk_len
-        # If a tokenizer is provided use it directly; otherwise fall back to the
-        # lazy ``get_tokenizer()`` helper which loads the default vocab pickle
-        # (legacy samar_vocab.pkl living next to this module).
         self.tokenizer = tokenizer if tokenizer is not None else get_tokenizer()
+        self.desc_tokenizer = DescriptionTokenizer()
+        self.vocab = self.tokenizer.get_vocab()
 
-        # Load all .xml AND .mxl files recursively from the given data
-        # directory. ``.mxl`` is the standard MusicXML 4.0 compressed
-        # format (zip container) -- parsing is handled transparently
-        # by ``MusicXMLParser._parse_xml_root``. Round-4 audit fix.
         print(f"Loading MusicXML files from: {data_dir}")
         xml_files = sorted(glob.glob(os.path.join(data_dir, "**/*.xml"), recursive=True))
         mxl_files = sorted(glob.glob(os.path.join(data_dir, "**/*.mxl"), recursive=True))
@@ -70,25 +117,59 @@ class SAMARDataset(Dataset):
         self.examples = []
         for file in self.files:
             try:
-                # Convert XML file into two separate streams (FIGARO pattern):
-                #   events         -- per-note tokens, encoded by SamarTokenizer
-                #   description    -- per-bar statistics, encoded by DescriptionTokenizer
-                # Earlier versions concatenated both and tokenized with the event
-                # tokenizer, which made every description token collapse to <unk>
-                # because the event vocab has no slot for MeanPitch_*/NoteDensity_*/
-                # etc. (audit round-2 finding A1/A2).
                 ir = SAMARInputRepresentation(file)
-                events = ir.events
+                raw_events = ir.events
                 description = ir.get_description_tokens()
-                # Encode ONLY the event stream against the event vocab.
-                event_ids = self.tokenizer.encode(events)
-                self.examples.extend([{
-                    "tokens": event_ids[i:i + context_size],
-                    "file": file,
-                    "description": description,
-                    } for i in range(0, len(event_ids), context_size) if len(event_ids[i:i + context_size]) >= self.min_chunk_len])
+
+                # Wrap with BOS/EOS
+                wrapped = [BOS_TOKEN] + raw_events + [EOS_TOKEN]
+                event_ids = self.tokenizer.encode(wrapped)
+                bar_ids, position_ids = compute_structural_ids(wrapped)
+                desc_ids = self.desc_tokenizer.encode(description)
+                desc_bar_ids = compute_desc_bar_ids(description)
+
+                bos_id = self.vocab.to_i(BOS_TOKEN)
+                eos_id = self.vocab.to_i(EOS_TOKEN)
+
+                # Chunk on bar boundaries (FIGARO pattern).
+                inner_ids = event_ids[1:-1]
+                inner_bar = bar_ids[1:-1]
+                inner_pos = position_ids[1:-1]
+
+                bar_prefix = f"{BAR_KEY}_"
+                bar_starts = [i for i, ev in enumerate(raw_events)
+                              if ev.startswith(bar_prefix)]
+                bar_starts.append(len(inner_ids))
+
+                chunk_start = 0
+                for bi in range(len(bar_starts)):
+                    end = bar_starts[bi]
+                    chunk_len = end - chunk_start
+                    is_last = (bi == len(bar_starts) - 1)
+
+                    if chunk_len >= context_size - 2 or is_last:
+                        if is_last:
+                            end = len(inner_ids)
+                        c_ids = inner_ids[chunk_start:end][:context_size - 2]
+                        c_bar = inner_bar[chunk_start:end][:context_size - 2]
+                        c_pos = inner_pos[chunk_start:end][:context_size - 2]
+                        chunk_start = end
+
+                        if len(c_ids) < self.min_chunk_len:
+                            continue
+                        c_ids = [bos_id] + c_ids + [eos_id]
+                        c_bar = [0] + c_bar + [0]
+                        c_pos = [0] + c_pos + [0]
+
+                        self.examples.append({
+                            "tokens": c_ids,
+                            "bar_ids": c_bar,
+                            "position_ids": c_pos,
+                            "description": desc_ids,
+                            "desc_bar_ids": desc_bar_ids,
+                            "file": file,
+                        })
             except Exception as e:
-                # Log failed file processing
                 print(f"Failed to process {file}: {e}")
 
         print(f"Total token chunks prepared: {len(self.examples)}")
@@ -98,64 +179,34 @@ class SAMARDataset(Dataset):
 
     def __getitem__(self, idx):
         item = self.examples[idx]
+        tokens = item["tokens"]
         return {
-        'input_ids': torch.tensor(item["tokens"][:-1], dtype=torch.long),
-        'labels': torch.tensor(item["tokens"][1:], dtype=torch.long),
-        'file': os.path.basename(item["file"]),
-        'description': item["description"]
+            "input_ids": torch.tensor(tokens[:-1], dtype=torch.long),
+            "labels": torch.tensor(tokens[1:], dtype=torch.long),
+            "bar_ids": torch.tensor(item["bar_ids"][:-1], dtype=torch.long),
+            "position_ids": torch.tensor(item["position_ids"][:-1], dtype=torch.long),
+            "description": torch.tensor(item["description"], dtype=torch.long),
+            "desc_bar_ids": torch.tensor(item["desc_bar_ids"], dtype=torch.long),
+            "file": os.path.basename(item["file"]),
         }
 
-# Helper function to return a DataLoader from SAMARDataset
-def get_samar_dataloader(data_dir, batch_size=16, context_size=256, max_files=-1, num_workers=0, min_chunk_len=8, drop_last=False):
-    dataset = SAMARDataset(
-        data_dir=data_dir,
-        context_size=context_size,
-        max_files=max_files,
-        min_chunk_len=min_chunk_len
-    )
-    return DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=num_workers,
-        drop_last=drop_last,
-        collate_fn=samar_collate_fn  # custom collation for batching
-    )
 
-# Dataset class for working with precomputed latent representations
 class SamarLatentDataset(Dataset):
-    """Reads ``latents.pt`` (output of ``precompute_samar_latents.py``)
-    and yields (input_ids, labels, latent, description) tuples.
+    """Reads precomputed data (round-18 format: no VQ-VAE latent).
 
-    Each sample's tokens may be SHORTER than ``context_size`` (e.g.
-    precomputed chunks are 30..255 long while the model uses
-    ``context_size=256``). Round-3 audit C2 found that the old
-    ``len >= context_size`` filter removed ALL 529 samples. We now
-    pad shorter samples with ``pad_id`` from the event tokenizer so
-    every sample has length exactly ``context_size``.
+    Each sample has tokens, bar_ids, position_ids, description,
+    desc_bar_ids.
     """
 
-    def __init__(self, latent_path, context_size=256, tokenizer=None, min_keep_len=None):
+    def __init__(self, latent_path, context_size=256, tokenizer=None,
+                 min_keep_len=None):
         self.context_size = context_size
-        self.samples = torch.load(latent_path)
+        self.samples = torch.load(latent_path, weights_only=False)
         self.tokenizer = tokenizer or SamarTokenizer.load(_TOKENIZER_PATH)
         self.pad_id = self.tokenizer.get_vocab().pad_id
 
-        # Round-12 audit: drop samples whose token length is below
-        # ``min_keep_len``. The previous behavior right-padded short
-        # samples to ``context_size`` with ``pad_id``, which means a
-        # 154-token sample becomes 40% pad (102 zeros). The loss is
-        # correctly masked via ``ignore_index=0`` so training is not
-        # directly affected, but the model's positional embeddings
-        # at those padding positions are never updated -- they stay
-        # at random init.
-        #
-        # Round-13: default ``min_keep_len`` is 64 (rather than
-        # ``context_size // 2`` which was too aggressive when
-        # ``context_size=512`` -- it would filter all 154/255-token
-        # Arabic samples).
         if min_keep_len is None:
-            min_keep_len = 64
+            min_keep_len = 16
         n_before = len(self.samples)
         self.samples = [s for s in self.samples if len(s["tokens"]) >= min_keep_len]
         n_after = len(self.samples)
@@ -163,8 +214,8 @@ class SamarLatentDataset(Dataset):
             print(f"[SamarLatentDataset] Filtered {n_before - n_after} samples "
                   f"shorter than {min_keep_len} tokens "
                   f"({n_before} -> {n_after} samples)")
-        # Detect-and-warn about stale latents (pre-round-2 corruption
-                # shows up as a high <unk> ratio). Round-3 audit M4.
+
+        # Warn about unk ratio
         unk_id = self.tokenizer.get_vocab().to_i(UNK_TOKEN)
         total_tokens = sum(len(s["tokens"]) for s in self.samples)
         unk_tokens = sum(1 for s in self.samples
@@ -173,132 +224,143 @@ class SamarLatentDataset(Dataset):
             unk_ratio = unk_tokens / total_tokens
             if unk_ratio > 0.05:
                 print(f"[SamarLatentDataset] WARNING: {unk_ratio:.1%} <unk> tokens "
-                      f"in {latent_path}. Run "
-                      f"`python -m samar.precompute_samar_latents` to regenerate.")
+                      f"in {latent_path}. Regenerate with "
+                      f"`python -m samar.precompute_samar_latents`.")
 
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, idx):
         item = self.samples[idx]
-        tokens = list(item["tokens"][: self.context_size])
-        # Right-pad short samples to context_size so DataLoader collate
-        # can stack them into a uniform tensor.
-        if len(tokens) < self.context_size:
-            tokens = tokens + [self.pad_id] * (self.context_size - len(tokens))
-        latent = item["latent"]
-        # Round-13 audit: pad/truncate latent to match token length so
-        # the forward() per-step latent add (line 164 of samar_transformer)
-        # works. The VAE produces a latent vector per source token
-        # (one latent frame per token), so the latent length should
-        # match the pre-padding token count. When tokens are padded to
-        # ``context_size``, the latent must be padded to match too,
-        # otherwise forward()'s
-        #   ``if latent_emb.size(1) == tgt.size(1): per-step add``
-        # branch silently fails (length 154 != 255) and falls back to
-        # the mean-pool branch, losing the per-step style signal.
-        if isinstance(latent, torch.Tensor):
-            latent_t = latent.detach().clone().float()
-        else:
-            latent_t = torch.tensor(latent, dtype=torch.float)
-        # Truncate or right-pad to match the trainer's expected
-        # input_ids length (which is ``context_size - 1`` because of
-        # the autoregressive [:-1] / [1:] shift). The forward()
-        # function compares ``latent_emb.size(1)`` to
-        # ``tgt.size(1)`` where ``tgt = token_embedding(input_ids)``,
-        # so the latent length must equal the input_ids length, not
-        # the full ``context_size``.
-        target_len = self.context_size - 1
-        L = latent_t.size(0)
-        if L > target_len:
-            latent_t = latent_t[:target_len]
-        elif L < target_len:
-            pad = torch.zeros(target_len - L, latent_t.size(1),
-                              dtype=latent_t.dtype)
-            latent_t = torch.cat([latent_t, pad], dim=0)
+        tokens = list(item["tokens"][:self.context_size])
+        bar_ids = list(item["bar_ids"][:self.context_size])
+        position_ids = list(item["position_ids"][:self.context_size])
+
+        # Pad to context_size
+        pad_len = self.context_size - len(tokens)
+        if pad_len > 0:
+            tokens = tokens + [self.pad_id] * pad_len
+            bar_ids = bar_ids + [0] * pad_len
+            position_ids = position_ids + [0] * pad_len
+
         result = {
-            "input_ids": torch.tensor(tokens[:-1], dtype=torch.long),  # T = context_size-1
-            "labels": torch.tensor(tokens[1:], dtype=torch.long),      # T = context_size-1
-            "latent": latent_t,
+            "input_ids": torch.tensor(tokens[:-1], dtype=torch.long),
+            "labels": torch.tensor(tokens[1:], dtype=torch.long),
+            "bar_ids": torch.tensor(bar_ids[:-1], dtype=torch.long),
+            "position_ids": torch.tensor(position_ids[:-1], dtype=torch.long),
         }
-        result["description"] = torch.tensor(
-                item["description"][: self.context_size], dtype=torch.long
-            )
+
+        # Cap description to 256 tokens to prevent OOM in encoder attention
+        max_desc_len = self.context_size
+
+        if "description" in item:
+            desc = item["description"]
+            if isinstance(desc, torch.Tensor):
+                result["description"] = desc[:max_desc_len].long()
+            elif isinstance(desc, list):
+                result["description"] = torch.tensor(desc[:max_desc_len], dtype=torch.long)
+            else:
+                result["description"] = torch.tensor(desc, dtype=torch.long)[:max_desc_len]
+
+        if "desc_bar_ids" in item:
+            dbi = item["desc_bar_ids"]
+            if isinstance(dbi, torch.Tensor):
+                result["desc_bar_ids"] = dbi[:max_desc_len].long()
+            elif isinstance(dbi, list):
+                result["desc_bar_ids"] = torch.tensor(dbi[:max_desc_len], dtype=torch.long)
+            else:
+                result["desc_bar_ids"] = torch.tensor(dbi, dtype=torch.long)[:max_desc_len]
+
         return result
 
-from torch.nn.utils.rnn import pad_sequence
 
-# Lazy description tokenizer -- rebuilt from constants, no pickle needed.
 _DESCRIPTION_TOKENIZER = None
+
 def _get_desc_tokenizer():
-    """Return a process-local ``DescriptionTokenizer`` (singleton)."""
     global _DESCRIPTION_TOKENIZER
     if _DESCRIPTION_TOKENIZER is None:
-        from .tokenizer import DescriptionTokenizer
         _DESCRIPTION_TOKENIZER = DescriptionTokenizer()
     return _DESCRIPTION_TOKENIZER
 
-# Collate function to pad sequences in a batch for training.
-#
-# Descriptions are encoded by ``DescriptionTokenizer`` against the separate
-# ``DescriptionVocab`` (matches FIGARO's split between event and description
-# vocabularies). The ``file`` key is preserved so debugging tools can trace
-# mispredicted tokens back to the source XML.
-def samar_collate_fn(batch):
-    input_ids = [item['input_ids'] for item in batch]
-    labels = [item['labels'] for item in batch]
 
-    # Pad input and label sequences to the longest sequence in the batch
-    input_ids_padded = pad_sequence(input_ids, batch_first=True, padding_value=0)
-    labels_padded = pad_sequence(labels, batch_first=True, padding_value=0)
+def samar_collate_fn(batch):
+    """Collate function: pads input_ids, labels, bar_ids, position_ids,
+    description, desc_bar_ids."""
+
+    input_ids = pad_sequence(
+        [item["input_ids"] for item in batch],
+        batch_first=True, padding_value=0
+    )
+    labels = pad_sequence(
+        [item["labels"] for item in batch],
+        batch_first=True, padding_value=0
+    )
+    bar_ids = pad_sequence(
+        [item["bar_ids"] for item in batch],
+        batch_first=True, padding_value=0
+    )
+    position_ids = pad_sequence(
+        [item["position_ids"] for item in batch],
+        batch_first=True, padding_value=0
+    )
 
     batch_dict = {
-        'input_ids': input_ids_padded,
-        'labels': labels_padded,
+        "input_ids": input_ids,
+        "labels": labels,
+        "bar_ids": bar_ids,
+        "position_ids": position_ids,
     }
 
-    # If latent vectors are included in the dataset, pad and include them
-    if 'latent' in batch[0]:
-        latent = [item['latent'] for item in batch]
-        latent_padded = pad_sequence(latent, batch_first=True, padding_value=0)
-        batch_dict['latent'] = latent_padded
+    if "description" in batch[0]:
+        desc_tok = _get_desc_tokenizer()
+        desc_ids = []
+        for item in batch:
+            d = item["description"]
+            if isinstance(d, torch.Tensor):
+                desc_ids.append(d.long())
+            elif isinstance(d, (list, tuple)) and len(d) > 0 and isinstance(d[0], int):
+                desc_ids.append(torch.tensor(d, dtype=torch.long))
+            else:
+                desc_ids.append(
+                    torch.tensor(desc_tok.encode(d), dtype=torch.long)
+                )
+        batch_dict["description"] = pad_sequence(
+            desc_ids, batch_first=True,
+            padding_value=desc_tok.get_vocab().pad_id,
+        )
 
-    if 'description' in batch[0]:
-            desc_lists = [item['description'] for item in batch]
-            desc_tok = _get_desc_tokenizer()
-            # Round-13 audit: handle the case where description is already a
-            # tensor of IDs (the precompute_samar_latents.py path stores
-            # description as encoded IDs in ``latents.pt``). The previous
-            # code unconditionally called ``desc_tok.encode()``, but
-            # ``encode`` expects strings -- passing a tensor of IDs causes
-            # ``stoi.get(int_token)`` to fall through to ``<unk>`` because
-            # ``stoi`` keys are strings. Result: every description token
-            # silently became ``<unk>`` during training, so the model
-            # never learned to use the description stream.
-            desc_ids = []
-            for desc in desc_lists:
-                if isinstance(desc, torch.Tensor):
-                    # Already encoded IDs -- use directly.
-                    desc_ids.append(desc.long())
-                elif isinstance(desc, (list, tuple)) and len(desc) > 0 \
-                        and isinstance(desc[0], int):
-                    # Already a list of IDs.
-                    desc_ids.append(torch.tensor(desc, dtype=torch.long))
-                else:
-                    # String tokens -- encode.
-                    desc_ids.append(
-                        torch.tensor(desc_tok.encode(desc), dtype=torch.long)
-                    )
-            desc_padded = pad_sequence(
-                desc_ids, batch_first=True,
-                padding_value=desc_tok.get_vocab().pad_id,
-            )
-            batch_dict['description'] = desc_padded
+    if "desc_bar_ids" in batch[0]:
+        dbi_list = []
+        for item in batch:
+            dbi = item["desc_bar_ids"]
+            if isinstance(dbi, torch.Tensor):
+                dbi_list.append(dbi.long())
+            else:
+                dbi_list.append(torch.tensor(dbi, dtype=torch.long))
+        batch_dict["desc_bar_ids"] = pad_sequence(
+            dbi_list, batch_first=True, padding_value=0,
+        )
 
-    # Preserve source filenames so debug tooling can attribute bad batches
-    # to specific training files. ``file`` is not a tensor -- it stays as a
-    # Python list of strings on the batch dict.
-    if 'file' in batch[0]:
-        batch_dict['file'] = [item.get('file', '') for item in batch]
+    if "file" in batch[0]:
+        batch_dict["file"] = [item.get("file", "") for item in batch]
 
     return batch_dict
+
+
+def get_samar_dataloader(data_dir, batch_size=16, context_size=256,
+                         max_files=-1, num_workers=0, min_chunk_len=8,
+                         drop_last=False):
+    dataset = SAMARDataset(
+        data_dir=data_dir,
+        context_size=context_size,
+        max_files=max_files,
+        min_chunk_len=min_chunk_len,
+    )
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        drop_last=drop_last,
+        collate_fn=samar_collate_fn,
+    )
