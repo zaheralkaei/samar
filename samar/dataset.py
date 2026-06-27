@@ -142,18 +142,20 @@ class SamarLatentDataset(Dataset):
         self.pad_id = self.tokenizer.get_vocab().pad_id
 
         # Round-12 audit: drop samples whose token length is below
-        # ``min_keep_len`` (default: ``context_size // 2``). The previous
-        # behavior right-padded short samples to ``context_size`` with
-        # ``pad_id``, which means a 154-token sample becomes 40% pad
-        # (102 zeros). The loss is correctly masked via ``ignore_index=0``
-        # so training is not directly affected, but the model's positional
-        # embeddings at those padding positions are never updated -- they
-        # stay at random init. After deleting ``Hello.xml`` / ``Hello2.xml``
-        # (the only sub-256 samples in the corpus), this filter is a no-op
-        # for ``latents.pt`` but protects against future regressions where
-        # a new short file sneaks in.
+        # ``min_keep_len``. The previous behavior right-padded short
+        # samples to ``context_size`` with ``pad_id``, which means a
+        # 154-token sample becomes 40% pad (102 zeros). The loss is
+        # correctly masked via ``ignore_index=0`` so training is not
+        # directly affected, but the model's positional embeddings
+        # at those padding positions are never updated -- they stay
+        # at random init.
+        #
+        # Round-13: default ``min_keep_len`` is 64 (rather than
+        # ``context_size // 2`` which was too aggressive when
+        # ``context_size=512`` -- it would filter all 154/255-token
+        # Arabic samples).
         if min_keep_len is None:
-            min_keep_len = context_size // 2
+            min_keep_len = 64
         n_before = len(self.samples)
         self.samples = [s for s in self.samples if len(s["tokens"]) >= min_keep_len]
         n_after = len(self.samples)
@@ -185,19 +187,41 @@ class SamarLatentDataset(Dataset):
         if len(tokens) < self.context_size:
             tokens = tokens + [self.pad_id] * (self.context_size - len(tokens))
         latent = item["latent"]
+        # Round-13 audit: pad/truncate latent to match token length so
+        # the forward() per-step latent add (line 164 of samar_transformer)
+        # works. The VAE produces a latent vector per source token
+        # (one latent frame per token), so the latent length should
+        # match the pre-padding token count. When tokens are padded to
+        # ``context_size``, the latent must be padded to match too,
+        # otherwise forward()'s
+        #   ``if latent_emb.size(1) == tgt.size(1): per-step add``
+        # branch silently fails (length 154 != 255) and falls back to
+        # the mean-pool branch, losing the per-step style signal.
+        if isinstance(latent, torch.Tensor):
+            latent_t = latent.detach().clone().float()
+        else:
+            latent_t = torch.tensor(latent, dtype=torch.float)
+        # Truncate or right-pad to match the trainer's expected
+        # input_ids length (which is ``context_size - 1`` because of
+        # the autoregressive [:-1] / [1:] shift). The forward()
+        # function compares ``latent_emb.size(1)`` to
+        # ``tgt.size(1)`` where ``tgt = token_embedding(input_ids)``,
+        # so the latent length must equal the input_ids length, not
+        # the full ``context_size``.
+        target_len = self.context_size - 1
+        L = latent_t.size(0)
+        if L > target_len:
+            latent_t = latent_t[:target_len]
+        elif L < target_len:
+            pad = torch.zeros(target_len - L, latent_t.size(1),
+                              dtype=latent_t.dtype)
+            latent_t = torch.cat([latent_t, pad], dim=0)
         result = {
-                    "input_ids": torch.tensor(tokens[:-1], dtype=torch.long),  # T = context_size-1
-                    "labels": torch.tensor(tokens[1:], dtype=torch.long),      # T = context_size-1
-                    "latent": (torch.as_tensor(latent).detach().clone().float()
-                               if isinstance(latent, torch.Tensor)
-                               else torch.tensor(latent, dtype=torch.float)),
-                }
-        # Round-3 audit M1: include description if available in the latent
-        # sample. The precomputed ``latents.pt`` doesn't store descriptions
-        # yet (added in a later round); until then, leave the key absent
-        # so the trainer / collator fall back to ``description=None``.
-        if "description" in item and item["description"] is not None:
-            result["description"] = torch.tensor(
+            "input_ids": torch.tensor(tokens[:-1], dtype=torch.long),  # T = context_size-1
+            "labels": torch.tensor(tokens[1:], dtype=torch.long),      # T = context_size-1
+            "latent": latent_t,
+        }
+        result["description"] = torch.tensor(
                 item["description"][: self.context_size], dtype=torch.long
             )
         return result
@@ -240,11 +264,36 @@ def samar_collate_fn(batch):
         batch_dict['latent'] = latent_padded
 
     if 'description' in batch[0]:
-        desc_lists = [item['description'] for item in batch]
-        desc_tok = _get_desc_tokenizer()
-        desc_ids = [torch.tensor(desc_tok.encode(desc), dtype=torch.long) for desc in desc_lists]
-        desc_padded = pad_sequence(desc_ids, batch_first=True, padding_value=desc_tok.get_vocab().pad_id)
-        batch_dict['description'] = desc_padded
+            desc_lists = [item['description'] for item in batch]
+            desc_tok = _get_desc_tokenizer()
+            # Round-13 audit: handle the case where description is already a
+            # tensor of IDs (the precompute_samar_latents.py path stores
+            # description as encoded IDs in ``latents.pt``). The previous
+            # code unconditionally called ``desc_tok.encode()``, but
+            # ``encode`` expects strings -- passing a tensor of IDs causes
+            # ``stoi.get(int_token)`` to fall through to ``<unk>`` because
+            # ``stoi`` keys are strings. Result: every description token
+            # silently became ``<unk>`` during training, so the model
+            # never learned to use the description stream.
+            desc_ids = []
+            for desc in desc_lists:
+                if isinstance(desc, torch.Tensor):
+                    # Already encoded IDs -- use directly.
+                    desc_ids.append(desc.long())
+                elif isinstance(desc, (list, tuple)) and len(desc) > 0 \
+                        and isinstance(desc[0], int):
+                    # Already a list of IDs.
+                    desc_ids.append(torch.tensor(desc, dtype=torch.long))
+                else:
+                    # String tokens -- encode.
+                    desc_ids.append(
+                        torch.tensor(desc_tok.encode(desc), dtype=torch.long)
+                    )
+            desc_padded = pad_sequence(
+                desc_ids, batch_first=True,
+                padding_value=desc_tok.get_vocab().pad_id,
+            )
+            batch_dict['description'] = desc_padded
 
     # Preserve source filenames so debug tooling can attribute bad batches
     # to specific training files. ``file`` is not a tensor -- it stays as a
