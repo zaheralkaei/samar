@@ -42,5 +42,9 @@ Thumbs.db
 
 # Local backups (preserved on disk for rollback, not tracked in repo)
 backups/
-checkpoints/samar_transformer.pt
-checkpoints/samar_transformer_best.pt
+
+# Trained Arabic transformer weights — TRACKED so fresh clones can reproduce.
+# Regenerate with: python -m samar.train_samar_transformer --num-epochs 30
+# (~20-30 min/epoch on CPU, ~10h for 30 epochs)
+# checkpoints/samar_transformer.pt       (last epoch, full state for resume)
+# checkpoints/samar_transformer_best.pt (best val_loss across epochs)
