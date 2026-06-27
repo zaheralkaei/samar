@@ -145,7 +145,7 @@ class SamarTransformerTrainer:
                 full, [n_train, n_val], generator=gen
             )
             print(f"[trainer] Split {len(full)} samples into "
-                  f"{n_train} train / {n_val} val")
+                  f"{n_train} train / {n_val} val", flush=True)
 
         self.train_dataloader = DataLoader(
             self.train_dataset, batch_size=batch_size, shuffle=True,
@@ -273,7 +273,7 @@ class SamarTransformerTrainer:
                 train_loss_count += 1
                 if (batch_idx + 1) % log_every_n_batches == 0:
                     print(f"  [epoch {epoch+1} batch {batch_idx+1}] "
-                          f"loss={loss.item():.4f}")
+                          f"loss={loss.item():.4f}", flush=True)
 
             train_avg = train_loss_sum / max(1, train_loss_count)
 
@@ -289,7 +289,8 @@ class SamarTransformerTrainer:
             val_avg = val_loss_sum / max(1, val_loss_count)
 
             print(f"Epoch {epoch+1}/{num_epochs}  "
-                  f"train_loss={train_avg:.4f}  val_loss={val_avg:.4f}")
+                  f"train_loss={train_avg:.4f}  val_loss={val_avg:.4f}",
+                  flush=True)
 
             # Round-5 fix: save best-val checkpoint every epoch so we
             # never lose training progress to a crash. Previously the
@@ -298,7 +299,7 @@ class SamarTransformerTrainer:
             if val_avg < best_val:
                 best_val = val_avg
                 self.save_model()
-                print(f"[trainer] New best val_loss={val_avg:.4f}")
+                print(f"[trainer] New best val_loss={val_avg:.4f}", flush=True)
 
             self.save_model()  # Final save even if not the best
 
