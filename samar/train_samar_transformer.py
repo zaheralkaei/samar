@@ -417,5 +417,11 @@ if __name__ == "__main__":
         gradient_clip=1.0,   # round-3 audit T5
         warmup_steps=1000,   # round-3 audit T7
     )
-    trainer.train(num_epochs=args.num_epochs)
+    # Round-16 R16-A: removed duplicate trainer.train() call.
+    # Round-14's trainer-hardening commit (5be1370) accidentally added a
+    # second trainer.train() call here on top of round-9's original. Result:
+    # --num-epochs 10 was actually running 20 epochs AND resetting the LR
+    # schedule mid-training. Round-15 claimed to fix this but the fix did
+    # not actually land in the file. Verify with: grep -c 'trainer\.train('
+    # samar/train_samar_transformer.py -> must be 1.
     trainer.train(num_epochs=args.num_epochs)
