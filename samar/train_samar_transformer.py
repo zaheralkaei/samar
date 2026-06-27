@@ -41,6 +41,28 @@ WEIGHTS_PATH = os.path.join(CHECKPOINT_DIR, "samar_transformer.pt")
 CONFIG_PATH = os.path.join(CHECKPOINT_DIR, "samar_transformer_config.json")
 VOCAB_PATH = os.path.join(_PACKAGE_DIR, "samar_vocab.pkl")
 
+def safe_cross_entropy(logits, labels, ignore_index=0):
+    """Cross-entropy loss that's safe against all-ignored-label batches.
+
+    PyTorch's ``F.cross_entropy`` with ``reduction='mean'`` returns NaN
+    if **all** labels equal ``ignore_index`` (no gradients to average
+    over). With our real data this never fires, but a future regression
+    (e.g. a dataset that accidentally pads everything) would propagate
+    NaN through the optimizer and corrupt the model. Use
+    ``reduction='sum'`` and divide by max(1, count) instead.
+
+    Round-14 audit.
+    """
+    loss = F.cross_entropy(
+        logits.reshape(-1, logits.size(-1)),
+        labels.reshape(-1),
+        ignore_index=ignore_index,
+        reduction='sum',
+    )
+    n_valid = (labels != ignore_index).sum().clamp_min(1)
+    return loss / n_valid
+
+
 
 def _load_tokenizer():
     """Load the singleton tokenizer (path resolved relative to the package)."""
@@ -77,17 +99,17 @@ class SamarTransformerTrainer:
     """
 
     def __init__(
-        self,
-        model: SamarTransformer,
-        latent_path=None,
-        batch_size=16,
-        lr=3e-4,
-        context_size=256,
-        val_fraction=0.1,
-        gradient_clip=1.0,
-        warmup_steps=1000,
-        tokenizer=None,
-    ):
+    self,
+    model: SamarTransformer,
+    latent_path=None,
+    batch_size=16,
+    lr=3e-4,
+    context_size=512,
+    val_fraction=0.1,
+    gradient_clip=1.0,
+    warmup_steps=1000,
+    tokenizer=None,
+        ):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = model.to(self.device)
         self.batch_size = batch_size
@@ -95,7 +117,6 @@ class SamarTransformerTrainer:
         self.context_size = context_size
         self.gradient_clip = gradient_clip
         self.warmup_steps = warmup_steps
-        self.best_val = float("inf")  # round-5: track best val_loss for checkpointing
         self.tokenizer = tokenizer or _load_tokenizer()
 
         if not latent_path:
@@ -185,12 +206,10 @@ class SamarTransformerTrainer:
             labels = labels.to(self.device)  # [B, T]
 
             # Cross-entropy over the full sequence (ignore_index=0 is pad_id).
-            # logits: [B, T, V] -> [B*T, V]; labels: [B, T] -> [B*T].
-            loss = F.cross_entropy(
-                logits.reshape(-1, logits.size(-1)),
-                labels.reshape(-1),
-                ignore_index=0,  # pad_id
-            )
+            # Use safe_cross_entropy (round-14 audit) to avoid NaN if a
+            # batch has all-pad labels (F.cross_entropy mean-reduction
+            # returns NaN in that case).
+            loss = safe_cross_entropy(logits, labels, ignore_index=0)
             return loss
 
     def validation_step(self, batch):
@@ -212,11 +231,7 @@ class SamarTransformerTrainer:
                 raise RuntimeError("batch['labels'] is required but missing.")
             labels = labels.to(self.device)
 
-            loss = F.cross_entropy(
-                logits.reshape(-1, logits.size(-1)),
-                labels.reshape(-1),
-                ignore_index=0,
-            )
+            loss = safe_cross_entropy(logits, labels, ignore_index=0)
             return loss
 
     def configure_optimizers(self):
@@ -326,6 +341,14 @@ if __name__ == "__main__":
         help="Adam learning rate.",
     )
     parser.add_argument(
+        "--context-size", type=int, default=512,
+        help=(
+            "Length of input event sequences. Must match the "
+            "checkpoint's max_len (default 512). Shorter samples are "
+            "padded, longer samples are truncated."
+        ),
+    )
+    parser.add_argument(
         "--latent-path", type=str, default=None,
         help=(
             "Path to precomputed latents.pt. Default: "
@@ -340,6 +363,8 @@ if __name__ == "__main__":
     else:
         latent_path = os.path.join(_REPO_ROOT, "latents", "latents.pt")
 
+    # Round-14: build the model with the same max_len as the CLI
+    # context_size, so the positional embedding capacity matches.
     model = SamarTransformer(
         d_model=DEFAULT_D_MODEL,
         n_head=DEFAULT_N_HEAD,
@@ -348,17 +373,19 @@ if __name__ == "__main__":
         dropout=DEFAULT_DROPOUT,
         vocab_size=DEFAULT_VOCAB_SIZE,
         latent_dim=DEFAULT_LATENT_DIM,
+        max_len=args.context_size,
     )
 
     trainer = SamarTransformerTrainer(
         model=model,
         latent_path=latent_path,
         tokenizer=_load_tokenizer(),
-                batch_size=16,
-                        lr=args.lr,
-                        context_size=256,
+        batch_size=16,
+        lr=args.lr,
+        context_size=args.context_size,
         val_fraction=0.1,    # round-3 audit T1: actual train/val split
         gradient_clip=1.0,   # round-3 audit T5
         warmup_steps=1000,   # round-3 audit T7
     )
+    trainer.train(num_epochs=args.num_epochs)
     trainer.train(num_epochs=args.num_epochs)
