@@ -1,0 +1,88 @@
+/home/zaher/projects/samar/samar/models/samar_transformer.py:43: UserWarning: [DescriptionVocab] 107 overlapping strings have different IDs in SamarVocab vs DescriptionVocab (e.g. [('TimeSignature_1/2', 748, 1132), ('TimeSignature_2/2', 775, 1159), ('TimeSignature_3/2', 794, 1178), ('TimeSignature_4/2', 808, 1192), ('TimeSignature_5/2', 821, 1205)]). Cross-tokenizer use will mis-encode. This is by-design per FIGARO two-stream split, but be careful: always use SamarTokenizer for events and DescriptionTokenizer for descriptions.
+  desc_vocab_size = len(DescriptionVocab())
+/home/zaher/projects/samar/.venv/lib/python3.12/site-packages/torch/nn/modules/transformer.py:143: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.self_attn.batch_first was not True(use batch_first for better inference performance)
+  self.encoder = TransformerEncoder(
+[model] Total parameters: 5,338,598
+[trainer] Split 658 samples into 593 train / 65 val
+/home/zaher/projects/samar/samar/tokenizer.py:65: UserWarning: [DescriptionVocab] 107 overlapping strings have different IDs in SamarVocab vs DescriptionVocab (e.g. [('TimeSignature_1/2', 748, 1132), ('TimeSignature_2/2', 775, 1159), ('TimeSignature_3/2', 794, 1178), ('TimeSignature_4/2', 808, 1192), ('TimeSignature_5/2', 821, 1205)]). Cross-tokenizer use will mis-encode. This is by-design per FIGARO two-stream split, but be careful: always use SamarTokenizer for events and DescriptionTokenizer for descriptions.
+  self.vocab = vocab or DescriptionVocab()
+  [epoch 1 batch 10] loss=5.4431
+  [epoch 1 batch 20] loss=4.8783
+  [epoch 1 batch 30] loss=4.7028
+Epoch 1/10  train_loss=5.1091  val_loss=4.2637
+[trainer] New best val_loss=4.2637
+[trainer] Saved weights -> /home/zaher/projects/samar/checkpoints/samar_transformer.pt
+[trainer] Saved config  -> /home/zaher/projects/samar/checkpoints/samar_transformer_config.json
+[trainer] Saved best   -> /home/zaher/projects/samar/checkpoints/samar_transformer_best.pt
+  [epoch 2 batch 10] loss=4.1560
+  [epoch 2 batch 20] loss=3.4504
+  [epoch 2 batch 30] loss=3.2604
+Epoch 2/10  train_loss=3.6653  val_loss=2.9027
+[trainer] New best val_loss=2.9027
+[trainer] Saved weights -> /home/zaher/projects/samar/checkpoints/samar_transformer.pt
+[trainer] Saved config  -> /home/zaher/projects/samar/checkpoints/samar_transformer_config.json
+[trainer] Saved best   -> /home/zaher/projects/samar/checkpoints/samar_transformer_best.pt
+  [epoch 3 batch 10] loss=2.9679
+  [epoch 3 batch 20] loss=2.3947
+  [epoch 3 batch 30] loss=2.4711
+Epoch 3/10  train_loss=2.6156  val_loss=2.2103
+[trainer] New best val_loss=2.2103
+[trainer] Saved weights -> /home/zaher/projects/samar/checkpoints/samar_transformer.pt
+[trainer] Saved config  -> /home/zaher/projects/samar/checkpoints/samar_transformer_config.json
+[trainer] Saved best   -> /home/zaher/projects/samar/checkpoints/samar_transformer_best.pt
+  [epoch 4 batch 10] loss=2.3410
+  [epoch 4 batch 20] loss=1.9662
+  [epoch 4 batch 30] loss=1.8857
+Epoch 4/10  train_loss=2.0888  val_loss=1.8567
+[trainer] New best val_loss=1.8567
+[trainer] Saved weights -> /home/zaher/projects/samar/checkpoints/samar_transformer.pt
+[trainer] Saved config  -> /home/zaher/projects/samar/checkpoints/samar_transformer_config.json
+[trainer] Saved best   -> /home/zaher/projects/samar/checkpoints/samar_transformer_best.pt
+  [epoch 5 batch 10] loss=1.8557
+  [epoch 5 batch 20] loss=1.8312
+  [epoch 5 batch 30] loss=1.7145
+Epoch 5/10  train_loss=1.8328  val_loss=1.6814
+[trainer] New best val_loss=1.6814
+[trainer] Saved weights -> /home/zaher/projects/samar/checkpoints/samar_transformer.pt
+[trainer] Saved config  -> /home/zaher/projects/samar/checkpoints/samar_transformer_config.json
+[trainer] Saved best   -> /home/zaher/projects/samar/checkpoints/samar_transformer_best.pt
+  [epoch 6 batch 10] loss=1.6601
+  [epoch 6 batch 20] loss=1.6398
+  [epoch 6 batch 30] loss=1.7064
+Epoch 6/10  train_loss=1.6973  val_loss=1.5756
+[trainer] New best val_loss=1.5756
+[trainer] Saved weights -> /home/zaher/projects/samar/checkpoints/samar_transformer.pt
+[trainer] Saved config  -> /home/zaher/projects/samar/checkpoints/samar_transformer_config.json
+[trainer] Saved best   -> /home/zaher/projects/samar/checkpoints/samar_transformer_best.pt
+  [epoch 7 batch 10] loss=1.6287
+  [epoch 7 batch 20] loss=1.4095
+  [epoch 7 batch 30] loss=1.4327
+Epoch 7/10  train_loss=1.5951  val_loss=1.5084
+[trainer] New best val_loss=1.5084
+[trainer] Saved weights -> /home/zaher/projects/samar/checkpoints/samar_transformer.pt
+[trainer] Saved config  -> /home/zaher/projects/samar/checkpoints/samar_transformer_config.json
+[trainer] Saved best   -> /home/zaher/projects/samar/checkpoints/samar_transformer_best.pt
+  [epoch 8 batch 10] loss=1.5571
+  [epoch 8 batch 20] loss=1.5984
+  [epoch 8 batch 30] loss=1.5934
+Epoch 8/10  train_loss=1.5357  val_loss=1.4622
+[trainer] New best val_loss=1.4622
+[trainer] Saved weights -> /home/zaher/projects/samar/checkpoints/samar_transformer.pt
+[trainer] Saved config  -> /home/zaher/projects/samar/checkpoints/samar_transformer_config.json
+[trainer] Saved best   -> /home/zaher/projects/samar/checkpoints/samar_transformer_best.pt
+  [epoch 9 batch 10] loss=1.5446
+  [epoch 9 batch 20] loss=1.3985
+  [epoch 9 batch 30] loss=1.6757
+Epoch 9/10  train_loss=1.4963  val_loss=1.4288
+[trainer] New best val_loss=1.4288
+[trainer] Saved weights -> /home/zaher/projects/samar/checkpoints/samar_transformer.pt
+[trainer] Saved config  -> /home/zaher/projects/samar/checkpoints/samar_transformer_config.json
+[trainer] Saved best   -> /home/zaher/projects/samar/checkpoints/samar_transformer_best.pt
+  [epoch 10 batch 10] loss=1.5169
+  [epoch 10 batch 20] loss=1.6673
+  [epoch 10 batch 30] loss=1.4521
+Epoch 10/10  train_loss=1.4465  val_loss=1.4071
+[trainer] New best val_loss=1.4071
+[trainer] Saved weights -> /home/zaher/projects/samar/checkpoints/samar_transformer.pt
+[trainer] Saved config  -> /home/zaher/projects/samar/checkpoints/samar_transformer_config.json
+[trainer] Saved best   -> /home/zaher/projects/samar/checkpoints/samar_transformer_best.pt
