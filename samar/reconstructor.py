@@ -9,6 +9,7 @@ Created on Tue May 20 15:04:46 2025
 
 
 import xml.etree.ElementTree as ET
+import copy
 from .constants import (
     DEFAULT_RESOLUTION,
     DEFAULT_POS_PER_QUARTER,
@@ -159,12 +160,87 @@ def reconstruct_musicxml_from_events(input_or_events, output_xml_path: str):
         bar_count = 0
 
         def _advance_last_tick():
-            """Update last_tick based on note_buffer after a note is flushed."""
-            nonlocal last_tick
+            """Update last_tick based on note_buffer after a note is flushed.
+            Also checks for measure overflow and auto-advances if needed.
+            """
+            nonlocal last_tick, current_bar, current_tick, bar_count
             idx = min(note_buffer.get('duration_idx', 0), len(DEFAULT_DURATION_BINS) - 1)
             dur_pos = DEFAULT_DURATION_BINS[idx]
             divisions = int(round(dur_pos * original_divisions / DEFAULT_POS_PER_QUARTER))
-            last_tick = current_tick + divisions
+            new_last_tick = current_tick + divisions
+
+            # Round-10: auto-advance if note overflows measure capacity.
+            # The model doesn't track measure capacity, so notes often
+            # exceed 4/4 (1920 ticks). We trim the note to fit, then
+            # create a new measure with the overflow.
+            beats, beat_type = current_time_signature or (4, 4)
+            quarters_per_bar = 4 * beats / beat_type
+            capacity = int(original_divisions * quarters_per_bar)
+
+            if new_last_tick > capacity:
+                # Trim the just-flushed note
+                meas = measures.get((DEFAULT_PART_ID, current_bar))
+                if meas is not None:
+                    notes_in_m = meas.findall('note')
+                    if notes_in_m:
+                        last_note_el = notes_in_m[-1]
+                        dur_el = last_note_el.find('duration')
+                        if dur_el is not None:
+                            orig_dur = int(dur_el.text)
+                            keep = capacity - current_tick
+                            overflow = orig_dur - keep
+                            if keep > 0 and overflow > 0:
+                                # Trim and split
+                                dur_el.text = str(keep)
+                                # Create next measure
+                                bar_count += 1
+                                current_bar = bar_count
+                                current_tick = 0
+                                last_tick = overflow
+                                m_new = ET.SubElement(
+                                    part_map[DEFAULT_PART_ID],
+                                    'measure',
+                                    number=str(current_bar)
+                                )
+                                measures[(DEFAULT_PART_ID, current_bar)] = m_new
+                                # Move overflow portion to new measure
+                                new_note = ET.SubElement(m_new, 'note')
+                                for child in last_note_el:
+                                    if child.tag != 'duration':
+                                        new_note.append(copy.deepcopy(child))
+                                ET.SubElement(new_note, 'duration').text = str(overflow)
+                                ET.SubElement(new_note, 'voice').text = '1'
+                                return
+                            elif keep <= 0:
+                                # Note doesn't fit at all, drop it from
+                                # current measure and recreate in next.
+                                meas.remove(last_note_el)
+                                bar_count += 1
+                                current_bar = bar_count
+                                current_tick = 0
+                                last_tick = 0
+                                m_new = ET.SubElement(
+                                    part_map[DEFAULT_PART_ID],
+                                    'measure',
+                                    number=str(current_bar)
+                                )
+                                measures[(DEFAULT_PART_ID, current_bar)] = m_new
+                                # Add the note to the new measure
+                                new_note = ET.SubElement(m_new, 'note')
+                                for child in last_note_el:
+                                    if child.tag != 'duration':
+                                        new_note.append(copy.deepcopy(child))
+                                ET.SubElement(new_note, 'duration').text = str(orig_dur)
+                                ET.SubElement(new_note, 'voice').text = '1'
+                                last_tick = orig_dur
+                                return
+            last_tick = new_last_tick
+
+        def _measure_capacity():
+            """Return the current measure's tick capacity (4/4 default = 1920)."""
+            beats, beat_type = current_time_signature or (4, 4)
+            quarters_per_bar = 4 * beats / beat_type
+            return int(original_divisions * quarters_per_bar)
 
         for ev in events:
             if ev.startswith(BAR_KEY + "_"):
@@ -212,7 +288,39 @@ def reconstruct_musicxml_from_events(input_or_events, output_xml_path: str):
 
             elif ev.startswith(POSITION_KEY + "_"):
                 raw_val = ev[len(POSITION_KEY)+1:]
-                current_tick = int(raw_val) * original_divisions // DEFAULT_POS_PER_QUARTER
+                # Round-10: cap position to within measure capacity
+                # (positions 0-47 = 0-1920 ticks for 4/4). The model
+                # sometimes emits positions > 47 (e.g. Position_140)
+                # which would create a huge forward. Cap to capacity.
+                pos = int(raw_val)
+                capacity = int(original_divisions * 4)  # 4/4 default
+                max_pos = (capacity * DEFAULT_POS_PER_QUARTER) // original_divisions
+                pos = min(pos, max_pos)
+                current_tick = pos * original_divisions // DEFAULT_POS_PER_QUARTER
+
+                # If the new position would exceed current measure
+                # capacity (last_tick + forward), auto-advance to a new
+                # measure and put the overflow in the new measure's
+                # forward.
+                beats, beat_type = current_time_signature or (4, 4)
+                quarters_per_bar = 4 * beats / beat_type
+                full_capacity = int(original_divisions * quarters_per_bar)
+                if last_tick + (current_tick - last_tick) > full_capacity:
+                    # The forward that will be created would exceed
+                    # the measure. Skip ahead to next measure and
+                    # reduce current_tick accordingly.
+                    overflow = last_tick + (current_tick - last_tick) - full_capacity
+                    if overflow > 0:
+                        bar_count += 1
+                        current_bar = bar_count
+                        last_tick = 0
+                        current_tick = overflow
+                        m = ET.SubElement(part_map[DEFAULT_PART_ID], 'measure',
+                                          number=str(current_bar))
+                        measures[(DEFAULT_PART_ID, current_bar)] = m
+                        # Emit a forward for the overflow in the new measure
+                        fwd = ET.SubElement(m, 'forward')
+                        ET.SubElement(fwd, 'duration').text = str(overflow)
 
             elif ev.startswith(PITCH_KEY + "_"):
                 # Round-9: flush any orphaned pitch from the buffer
@@ -286,6 +394,86 @@ def reconstruct_musicxml_from_events(input_or_events, output_xml_path: str):
                 note_buffer.clear()
 
         tree = ET.ElementTree(new_root)
+
+        # Round-10: post-processing step. Walk through all measures and
+        # split any that overflow capacity (MuseScore rejects these as
+        # corrupt). We iterate to a fixed point: each split might create
+        # new overflowing measures that need to be split again.
+        for part in list(tree.iter('part')):
+            # Iterate to fixed point: keep splitting until no overflows
+            changed = True
+            while changed:
+                changed = False
+                for meas in list(part.findall('measure')):
+                    total = 0
+                    for child in meas:
+                        if child.tag == 'note':
+                            total += int(child.find('duration').text)
+                        elif child.tag == 'forward':
+                            total += int(child.find('duration').text)
+                    if total <= 1920:
+                        continue
+                    # Split: walk children, accumulate, start new measure
+                    # when would exceed capacity
+                    capacity = 1920
+                    current_total = 0
+                    split_count = 0
+                    for child in list(meas):
+                        child_dur = 0
+                        if child.tag == 'note':
+                            child_dur = int(child.find('duration').text)
+                        elif child.tag == 'forward':
+                            child_dur = int(child.find('duration').text
+                            )
+                        # Even a single child > capacity should be
+                        # trimmed to fit and the overflow moved to next measure
+                        if child_dur > capacity:
+                            # Trim this child
+                            dur_el = child.find('duration')
+                            if dur_el is not None:
+                                dur_el.text = str(capacity)
+                            # Move overflow to new measure
+                            overflow = child_dur - capacity
+                            new_meas = ET.Element('measure',
+                                                  number=str(int(meas.get('number')) + 1 + split_count))
+                            split_count += 1
+                            new_note = ET.Element(child.tag)
+                            if child.tag == 'note':
+                                for c2 in child:
+                                    if c2.tag != 'duration':
+                                        new_note.append(copy.deepcopy(c2))
+                                ET.SubElement(new_note, 'duration').text = str(overflow)
+                                ET.SubElement(new_note, 'voice').text = '1'
+                            else:
+                                # forward
+                                ET.SubElement(new_note, 'duration').text = str(overflow)
+                            new_meas.append(new_note)
+                            part.append(new_meas)
+                            current_total = capacity  # current is now full
+                            changed = True
+                            continue
+                        if current_total + child_dur > capacity and current_total > 0:
+                            new_meas = ET.Element('measure',
+                                                  number=str(int(meas.get('number')) + 1 + split_count))
+                            split_count += 1
+                            meas.remove(child)
+                            new_meas.append(child)
+                            part.append(new_meas)
+                            current_total = child_dur
+                            changed = True
+                        else:
+                            current_total += child_dur
+                    # Renumber all measures in this part sequentially
+                    if split_count > 0:
+                        all_measures_in_part = part.findall('measure')
+                        for i, m in enumerate(all_measures_in_part):
+                            m.set('number', str(i + 1))
+                        # Also ensure measure 1 has attributes (only after renumbering)
+                        if all_measures_in_part:
+                            first = all_measures_in_part[0]
+                            if first.find('attributes') is None:
+                                _ensure_attributes(first)
+
         tree.write(output_xml_path, encoding='utf-8', xml_declaration=True)
     else:
         raise TypeError("Only supports REMI+ event lists")
