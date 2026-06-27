@@ -5,6 +5,20 @@ Training script for the autoregressive Transformer decoder.
 The transformer takes (latent, description, events) as input and
 predicts the next event token. See ``docs/audit-round-3.md`` for the
 audit history of this file.
+
+Round-17: extended ``save_model`` / ``--resume`` to save and restore
+the full training state (model + optimizer + scheduler + epoch +
+best_val). Previously ``--resume`` only restored model weights, so
+the optimizer momentum reset to zero and the LR schedule re-warmed
+up over the first 1000 steps of the resumed run. The round-17
+extension enables true continue-training where the resumed run picks
+up exactly where the previous run left off.
+
+Backward compatibility: if the checkpoint file contains only
+``state_dict`` (the round-15/16 format, no optimizer/scheduler),
+``--resume`` falls back to warm-start-only behavior (weights load,
+fresh optimizer/scheduler). The trainer prints a notice when this
+fallback fires.
 """
 
 import os
@@ -118,6 +132,16 @@ class SamarTransformerTrainer:
         self.gradient_clip = gradient_clip
         self.warmup_steps = warmup_steps
         self.tokenizer = tokenizer or _load_tokenizer()
+
+        # Round-17: optimizer and scheduler are created lazily in
+        # ``configure_optimizers()`` (called by ``train()``). When the
+        # trainer is resumed, the loaded optimizer/scheduler state is
+        # assigned here before ``train()`` is called so ``save_model``
+        # picks up the restored state.
+        self.optimizer = None
+        self.scheduler = None
+        self.start_epoch = 0   # round-17: set by --resume to skip already-done epochs
+        self.initial_best_val = float("inf")  # round-17: best_val restored from checkpoint
 
         if not latent_path:
             raise ValueError("latent_path must be provided.")
@@ -235,27 +259,137 @@ class SamarTransformerTrainer:
             return loss
 
     def configure_optimizers(self):
+        """Build Adam + LambdaLR scheduler. Stores both on ``self`` so
+        ``save_model`` and ``--resume`` can round-trip them.
+
+        Round-17: previously returned (optimizer, scheduler) without
+        attaching to self, so resume could not restore their state.
+        """
         optimizer = Adam(self.model.parameters(), lr=self.lr)
         scheduler = LambdaLR(optimizer, lr_lambda=self._lr_lambda)
+        self.optimizer = optimizer
+        self.scheduler = scheduler
         return optimizer, scheduler
 
-    def save_model(self):
-        """Save weights + config JSON. The JSON is regenerated every
-        training run so it always matches the vocab/checkpoint state.
-        It's gitignored -- see ``.gitignore``."""
+    def save_model(self, epoch=None, best_val=None):
+        """Save full training state to ``WEIGHTS_PATH``.
+
+        Round-17: extended from weights-only to a full state dict
+        containing ``model_state_dict``, ``optimizer_state_dict``,
+        ``scheduler_state_dict``, ``epoch``, ``best_val``, and
+        ``lr``. The JSON config is regenerated every save from
+        ``model.get_config()`` so it always matches the model shape.
+
+        Backward compat: old checkpoints that contain only
+        ``state_dict()`` keys (round-15/16 format) still load
+        cleanly -- ``load_pretrained`` in ``--resume`` detects the
+        old format and falls back to warm-start.
+
+        The .pt is now over 35MB; the JSON is gitignored (see
+        ``.gitignore``).
+        """
         os.makedirs(CHECKPOINT_DIR, exist_ok=True)
-        torch.save(self.model.state_dict(), WEIGHTS_PATH)
+        # Round-17: full state. If optimizer/scheduler haven't been
+        # built yet (i.e. save_model was called before train()),
+        # store None placeholders so the dict shape is consistent.
+        state = {
+            "model_state_dict": self.model.state_dict(),
+            "epoch": epoch,
+            "best_val": best_val,
+            "lr": self.lr,
+            "warmup_steps": self.warmup_steps,
+            "context_size": self.context_size,
+            "round": 17,
+        }
+        if self.optimizer is not None:
+            state["optimizer_state_dict"] = self.optimizer.state_dict()
+        if self.scheduler is not None:
+            state["scheduler_state_dict"] = self.scheduler.state_dict()
+            # ``last_epoch`` is the canonical resume position for
+            # LambdaLR. PyTorch's LambdaLR uses last_epoch to offset
+            # the lr_lambda step counter so the schedule continues
+            # smoothly across resumes.
+            state["scheduler_last_epoch"] = self.scheduler.last_epoch
+        torch.save(state, WEIGHTS_PATH)
         config = self.model.get_config()
         with open(CONFIG_PATH, "w") as f:
             json.dump(config, f, indent=2)
         print(f"[trainer] Saved weights -> {WEIGHTS_PATH}")
         print(f"[trainer] Saved config  -> {CONFIG_PATH}")
 
-    def train(self, num_epochs=10, log_every_n_batches=50):
-        optimizer, scheduler = self.configure_optimizers()
-        best_val = float("inf")  # round-5: track best val_loss for checkpointing
+    def load_pretrained_state(self, path):
+        """Load a checkpoint produced by ``save_model`` (round-17+).
 
-        for epoch in range(num_epochs):
+        Returns a dict with keys:
+          - 'state_dict' : model weights (always present)
+          - 'optimizer_state_dict' : or None if old-format checkpoint
+          - 'scheduler_state_dict' : or None
+          - 'epoch' : int (0 if old format)
+          - 'best_val' : float (inf if old format)
+          - 'lr' : float (None if old format; uses trainer default otherwise)
+          - 'is_old_format' : bool
+
+        Round-17: distinguishes between the round-15/16 weight-only
+        format and the round-17 full state format. The caller
+        (``__main__``) decides whether to restore optimizer/scheduler
+        state or fall back to warm-start.
+        """
+        loaded = torch.load(path, map_location=self.device, weights_only=False)
+        if isinstance(loaded, dict) and "model_state_dict" in loaded:
+            # Round-17+ full state
+            return {
+                "state_dict": loaded["model_state_dict"],
+                "optimizer_state_dict": loaded.get("optimizer_state_dict"),
+                "scheduler_state_dict": loaded.get("scheduler_state_dict"),
+                "scheduler_last_epoch": loaded.get("scheduler_last_epoch", 0),
+                "epoch": loaded.get("epoch", 0),
+                "best_val": loaded.get("best_val", float("inf")),
+                "lr": loaded.get("lr"),
+                "is_old_format": False,
+            }
+        # Old format: bare state_dict from round-15/16
+        return {
+            "state_dict": loaded,
+            "optimizer_state_dict": None,
+            "scheduler_state_dict": None,
+            "scheduler_last_epoch": 0,
+            "epoch": 0,
+            "best_val": float("inf"),
+            "lr": None,
+            "is_old_format": True,
+        }
+
+    def train(self, num_epochs=10, log_every_n_batches=50):
+        """Train for ``num_epochs`` epochs.
+
+        Round-17: if ``self.start_epoch > 0`` (set by --resume), the
+        epoch loop starts from there so we don't re-do work. The
+        scheduler's ``last_epoch`` is restored from the checkpoint so
+        the LR schedule continues smoothly (no double warmup).
+        """
+        optimizer, scheduler = self.configure_optimizers()
+
+        # Round-17: if --resume populated self.optimizer / self.scheduler,
+        # restore the loaded state. configure_optimizers() just
+        # attached fresh ones; we overwrite with the loaded ones below.
+        if hasattr(self, "_resume_optimizer_state") and self._resume_optimizer_state is not None:
+            optimizer.load_state_dict(self._resume_optimizer_state)
+            self.optimizer = optimizer
+            print(f"[trainer] Restored optimizer state from resume", flush=True)
+        if hasattr(self, "_resume_scheduler_state") and self._resume_scheduler_state is not None:
+            scheduler.load_state_dict(self._resume_scheduler_state)
+            self.scheduler = scheduler
+            print(f"[trainer] Restored scheduler state from resume "
+                  f"(last_epoch={scheduler.last_epoch})", flush=True)
+        elif hasattr(self, "_resume_scheduler_last_epoch"):
+            # Old-format resume: advance scheduler.last_epoch to the
+            # checkpoint's epoch count so the LR continues from there.
+            scheduler.last_epoch = self._resume_scheduler_last_epoch
+            self.scheduler = scheduler
+
+        best_val = self.initial_best_val  # round-17: restored from checkpoint
+
+        for epoch in range(self.start_epoch, self.start_epoch + num_epochs):
             # === Train ===
             self.model.train()
             train_loss_sum = 0.0
@@ -288,7 +422,7 @@ class SamarTransformerTrainer:
                     val_loss_count += 1
             val_avg = val_loss_sum / max(1, val_loss_count)
 
-            print(f"Epoch {epoch+1}/{num_epochs}  "
+            print(f"Epoch {epoch+1}/{self.start_epoch + num_epochs}  "
                   f"train_loss={train_avg:.4f}  val_loss={val_avg:.4f}",
                   flush=True)
 
@@ -298,10 +432,12 @@ class SamarTransformerTrainer:
             # meant any mid-training failure lost everything.
             if val_avg < best_val:
                 best_val = val_avg
-                self.save_model()
+                self.save_model(epoch=epoch + 1, best_val=best_val)
                 print(f"[trainer] New best val_loss={val_avg:.4f}", flush=True)
-
-            self.save_model()  # Final save even if not the best
+            else:
+                # Even if not best, save the latest state so a
+                # resume picks up the most recent epoch. Round-17.
+                self.save_model(epoch=epoch + 1, best_val=best_val)
 
 
 def load_trained_transformer():
@@ -360,9 +496,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--resume", type=str, default=None,
         help=(
-            "Path to a checkpoint .pt to warm-start from. The matching "
-            "_config.json file is loaded automatically if present. "
-            "Useful for continuing training past an initial run."
+            "Path to a checkpoint .pt to continue training from. Round-17: "
+            "restores model weights, optimizer state (Adam momentum), "
+            "scheduler state (LR position), epoch counter, and best_val. "
+            "Old-format (round-15/16) checkpoints that only contain "
+            "weights fall back to warm-start-only behavior."
         ),
     )
     args = parser.parse_args()
@@ -385,11 +523,44 @@ if __name__ == "__main__":
         max_len=args.context_size,
     )
 
-    # Round-15: warm-start from an existing checkpoint if --resume is
-    # provided. Loads weights via from_pretrained which handles shape
-    # compatibility. Useful for continuing training past an initial run.
+    # Round-15 / Round-17: warm-start or full-resume from an existing
+    # checkpoint if --resume is provided.
     if args.resume:
         print(f"[trainer] Resuming from checkpoint: {args.resume}", flush=True)
+        # Use the trainer's load_pretrained_state helper so we can
+        # detect old-format vs new-format checkpoints in one place.
+        # We have to instantiate the trainer first to get the helper,
+        # but the trainer needs the model + latent_path, so do the
+        # minimal setup here, call load_pretrained_state, then build
+        # the trainer with the restored start_epoch / state.
+        # Actually simpler: build the trainer after we know the
+        # checkpoint format, but the trainer needs latent_path +
+        # model. Construct a stub trainer to call the helper:
+        stub_tokenizer = _load_tokenizer()
+        stub_trainer = SamarTransformerTrainer(
+            model=model,
+            latent_path=latent_path,
+            tokenizer=stub_tokenizer,
+            batch_size=16,
+            lr=args.lr,
+            context_size=args.context_size,
+            val_fraction=0.1,
+            gradient_clip=1.0,
+            warmup_steps=1000,
+        )
+        loaded = stub_trainer.load_pretrained_state(args.resume)
+        if loaded["is_old_format"]:
+            print(f"[trainer] Old-format checkpoint (weights only). "
+                  f"Falling back to warm-start; optimizer/scheduler will "
+                  f"reset and LR will re-warmup. Re-save with the new "
+                  f"trainer (round-17) to enable full resume.",
+                  flush=True)
+        else:
+            print(f"[trainer] Full-state checkpoint detected: "
+                  f"epoch={loaded['epoch']}, best_val={loaded['best_val']:.4f}",
+                  flush=True)
+        # Load the model weights via SamarTransformer.from_pretrained
+        # so we get the standard missing-keys report.
         resume_cfg_path = args.resume.replace(".pt", "_config.json")
         if os.path.exists(resume_cfg_path):
             with open(resume_cfg_path) as f_cfg:
@@ -405,6 +576,12 @@ if __name__ == "__main__":
             print(f"[trainer] warm-started missing: {report['missing']}", flush=True)
         if report["unexpected"]:
             print(f"[trainer] ignored unexpected: {report['unexpected']}", flush=True)
+        # Round-17: carry the loaded state forward to the trainer.
+        # We rebuild the trainer (discarding stub_trainer) but pass
+        # the loaded state via attributes the trainer expects.
+        _resume_loaded = loaded
+    else:
+        _resume_loaded = None
 
     trainer = SamarTransformerTrainer(
         model=model,
@@ -417,6 +594,18 @@ if __name__ == "__main__":
         gradient_clip=1.0,   # round-3 audit T5
         warmup_steps=1000,   # round-3 audit T7
     )
+
+    if _resume_loaded is not None:
+        # Round-17: wire the loaded state into the trainer. The
+        # trainer's train() picks up these attributes.
+        trainer.start_epoch = _resume_loaded["epoch"]
+        trainer.initial_best_val = _resume_loaded["best_val"]
+        trainer._resume_optimizer_state = _resume_loaded["optimizer_state_dict"]
+        trainer._resume_scheduler_state = _resume_loaded["scheduler_state_dict"]
+        trainer._resume_scheduler_last_epoch = _resume_loaded["scheduler_last_epoch"]
+        print(f"[trainer] Resuming from epoch {trainer.start_epoch}, "
+              f"best_val={trainer.initial_best_val:.4f}", flush=True)
+
     # Round-16 R16-A: removed duplicate trainer.train() call.
     # Round-14's trainer-hardening commit (5be1370) accidentally added a
     # second trainer.train() call here on top of round-9's original. Result:

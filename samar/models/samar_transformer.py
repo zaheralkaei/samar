@@ -370,6 +370,12 @@ class SamarTransformer(nn.Module):
         sd = _torch.load(ckpt_path, map_location=device, weights_only=False)
         if isinstance(sd, dict) and "state_dict" in sd:
             sd = sd["state_dict"]
+        # Round-17: ``save_model`` wraps the weights under
+        # ``model_state_dict`` (alongside optimizer/scheduler state).
+        # Detect that format too so ``from_pretrained`` works on
+        # round-17+ checkpoints.
+        if isinstance(sd, dict) and "model_state_dict" in sd:
+            sd = sd["model_state_dict"]
         if config is None:
             cfg_keys = ["d_model", "n_head", "num_layers", "dim_feedforward",
                         "dropout", "vocab_size", "latent_dim"]
