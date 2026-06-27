@@ -1,0 +1,67 @@
+C:\github_projects\samar\samar\models\samar_transformer.py:64: UserWarning: [DescriptionVocab] 107 overlapping strings have different IDs in SamarVocab vs DescriptionVocab (e.g. [('TimeSignature_1/2', 748, 1132), ('TimeSignature_2/2', 775, 1159), ('TimeSignature_3/2', 794, 1178), ('TimeSignature_4/2', 808, 1192), ('TimeSignature_5/2', 821, 1205)]). Cross-tokenizer use will mis-encode. This is by-design per FIGARO two-stream split, but be careful: always use SamarTokenizer for events and DescriptionTokenizer for descriptions.
+  default_desc_vocab_size = len(DescriptionVocab())
+C:\Users\zaher\AppData\Roaming\Python\Python313\site-packages\torch\nn\modules\transformer.py:144: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.self_attn.batch_first was not True(use batch_first for better inference performance)
+  self.encoder = TransformerEncoder(
+[trainer] Split 698 samples into 629 train / 69 val
+C:\github_projects\samar\samar\tokenizer.py:65: UserWarning: [DescriptionVocab] 107 overlapping strings have different IDs in SamarVocab vs DescriptionVocab (e.g. [('TimeSignature_1/2', 748, 1132), ('TimeSignature_2/2', 775, 1159), ('TimeSignature_3/2', 794, 1178), ('TimeSignature_4/2', 808, 1192), ('TimeSignature_5/2', 821, 1205)]). Cross-tokenizer use will mis-encode. This is by-design per FIGARO two-stream split, but be careful: always use SamarTokenizer for events and DescriptionTokenizer for descriptions.
+  self.vocab = vocab or DescriptionVocab()
+Epoch 1/10  train_loss=6.7978  val_loss=5.7868
+[trainer] Saved weights -> C:\github_projects\samar\checkpoints\samar_transformer.pt
+[trainer] Saved config  -> C:\github_projects\samar\checkpoints\samar_transformer_config.json
+[trainer] New best val_loss=5.7868
+[trainer] Saved weights -> C:\github_projects\samar\checkpoints\samar_transformer.pt
+[trainer] Saved config  -> C:\github_projects\samar\checkpoints\samar_transformer_config.json
+Epoch 2/10  train_loss=5.4601  val_loss=4.9020
+[trainer] Saved weights -> C:\github_projects\samar\checkpoints\samar_transformer.pt
+[trainer] Saved config  -> C:\github_projects\samar\checkpoints\samar_transformer_config.json
+[trainer] New best val_loss=4.9020
+[trainer] Saved weights -> C:\github_projects\samar\checkpoints\samar_transformer.pt
+[trainer] Saved config  -> C:\github_projects\samar\checkpoints\samar_transformer_config.json
+Epoch 3/10  train_loss=4.7910  val_loss=4.1165
+[trainer] Saved weights -> C:\github_projects\samar\checkpoints\samar_transformer.pt
+[trainer] Saved config  -> C:\github_projects\samar\checkpoints\samar_transformer_config.json
+[trainer] New best val_loss=4.1165
+[trainer] Saved weights -> C:\github_projects\samar\checkpoints\samar_transformer.pt
+[trainer] Saved config  -> C:\github_projects\samar\checkpoints\samar_transformer_config.json
+Epoch 4/10  train_loss=3.8946  val_loss=3.1899
+[trainer] Saved weights -> C:\github_projects\samar\checkpoints\samar_transformer.pt
+[trainer] Saved config  -> C:\github_projects\samar\checkpoints\samar_transformer_config.json
+[trainer] New best val_loss=3.1899
+[trainer] Saved weights -> C:\github_projects\samar\checkpoints\samar_transformer.pt
+[trainer] Saved config  -> C:\github_projects\samar\checkpoints\samar_transformer_config.json
+Epoch 5/10  train_loss=3.0272  val_loss=2.5772
+[trainer] Saved weights -> C:\github_projects\samar\checkpoints\samar_transformer.pt
+[trainer] Saved config  -> C:\github_projects\samar\checkpoints\samar_transformer_config.json
+[trainer] New best val_loss=2.5772
+[trainer] Saved weights -> C:\github_projects\samar\checkpoints\samar_transformer.pt
+[trainer] Saved config  -> C:\github_projects\samar\checkpoints\samar_transformer_config.json
+Epoch 6/10  train_loss=2.4490  val_loss=2.1821
+[trainer] Saved weights -> C:\github_projects\samar\checkpoints\samar_transformer.pt
+[trainer] Saved config  -> C:\github_projects\samar\checkpoints\samar_transformer_config.json
+[trainer] New best val_loss=2.1821
+[trainer] Saved weights -> C:\github_projects\samar\checkpoints\samar_transformer.pt
+[trainer] Saved config  -> C:\github_projects\samar\checkpoints\samar_transformer_config.json
+Epoch 7/10  train_loss=2.1017  val_loss=1.9995
+[trainer] Saved weights -> C:\github_projects\samar\checkpoints\samar_transformer.pt
+[trainer] Saved config  -> C:\github_projects\samar\checkpoints\samar_transformer_config.json
+[trainer] New best val_loss=1.9995
+[trainer] Saved weights -> C:\github_projects\samar\checkpoints\samar_transformer.pt
+[trainer] Saved config  -> C:\github_projects\samar\checkpoints\samar_transformer_config.json
+Epoch 8/10  train_loss=1.9160  val_loss=1.8423
+[trainer] Saved weights -> C:\github_projects\samar\checkpoints\samar_transformer.pt
+[trainer] Saved config  -> C:\github_projects\samar\checkpoints\samar_transformer_config.json
+[trainer] New best val_loss=1.8423
+[trainer] Saved weights -> C:\github_projects\samar\checkpoints\samar_transformer.pt
+[trainer] Saved config  -> C:\github_projects\samar\checkpoints\samar_transformer_config.json
+Epoch 9/10  train_loss=1.7933  val_loss=1.7431
+[trainer] Saved weights -> C:\github_projects\samar\checkpoints\samar_transformer.pt
+[trainer] Saved config  -> C:\github_projects\samar\checkpoints\samar_transformer_config.json
+[trainer] New best val_loss=1.7431
+[trainer] Saved weights -> C:\github_projects\samar\checkpoints\samar_transformer.pt
+[trainer] Saved config  -> C:\github_projects\samar\checkpoints\samar_transformer_config.json
+Epoch 10/10  train_loss=1.7143  val_loss=1.6993
+[trainer] Saved weights -> C:\github_projects\samar\checkpoints\samar_transformer.pt
+[trainer] Saved config  -> C:\github_projects\samar\checkpoints\samar_transformer_config.json
+[trainer] New best val_loss=1.6993
+[trainer] Saved weights -> C:\github_projects\samar\checkpoints\samar_transformer.pt
+[trainer] Saved config  -> C:\github_projects\samar\checkpoints\samar_transformer_config.json

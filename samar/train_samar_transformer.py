@@ -357,6 +357,14 @@ if __name__ == "__main__":
             "latents/midi_latents.pt to train on Western classical MIDI."
         ),
     )
+    parser.add_argument(
+        "--resume", type=str, default=None,
+        help=(
+            "Path to a checkpoint .pt to warm-start from. The matching "
+            "_config.json file is loaded automatically if present. "
+            "Useful for continuing training past an initial run."
+        ),
+    )
     args = parser.parse_args()
 
     if args.latent_path:
@@ -376,6 +384,27 @@ if __name__ == "__main__":
         latent_dim=DEFAULT_LATENT_DIM,
         max_len=args.context_size,
     )
+
+    # Round-15: warm-start from an existing checkpoint if --resume is
+    # provided. Loads weights via from_pretrained which handles shape
+    # compatibility. Useful for continuing training past an initial run.
+    if args.resume:
+        print(f"[trainer] Resuming from checkpoint: {args.resume}", flush=True)
+        resume_cfg_path = args.resume.replace(".pt", "_config.json")
+        if os.path.exists(resume_cfg_path):
+            with open(resume_cfg_path) as f_cfg:
+                resume_cfg = json.load(f_cfg)
+        else:
+            print(f"[trainer] WARNING: no config file at {resume_cfg_path}, "
+                  f"using default config", flush=True)
+            resume_cfg = None
+        model, report = SamarTransformer.from_pretrained(
+            args.resume, config=resume_cfg, device="cpu",
+        )
+        if report["missing"]:
+            print(f"[trainer] warm-started missing: {report['missing']}", flush=True)
+        if report["unexpected"]:
+            print(f"[trainer] ignored unexpected: {report['unexpected']}", flush=True)
 
     trainer = SamarTransformerTrainer(
         model=model,
