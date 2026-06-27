@@ -12,7 +12,8 @@ reconstructed MusicXML (.xml).
 | round-9 (50 epoch) | 01-06 | round-9 (LM, no causal mask, broken description) | 48-62 notes, 2-3 microtones |
 | round-15 (10 epoch) | 07-12 | round-15 (LM + causal mask + working description, but with duplicate-call bug) | 53-78 notes, 3-19 microtones |
 | round-16 (10 epoch) | 13-19 | round-16 (R16-A fix: duplicate trainer.train() removed) | 86-126 notes, 6-16 microtones |
-| **round-17 (30 epoch total)** | **01-07** | **round-17 (full-state --resume, 10 epochs from val=1.65 then 10 more from val=1.45)** | **49-63 notes, 0-4 microtones** |
+| round-17 (30 epoch total) | 01-07 | round-17 (full-state --resume, val=1.61) | 49-63 notes, 0-4 microtones |
+| **round-18 (30 epoch total)** | **01-06** | **round-18 (FIGARO-aligned: description-only encoder, bar/position embeddings, no VQ-VAE, val=1.1810)** | **28-44 notes, 3-12 alters, sequential measures 1-N** |
 
 ## Round 15 examples (latest)
 
@@ -119,6 +120,66 @@ the same temperature (106 → 54) because lower loss means the model
 terminates sequences earlier (more confident about when to end). This
 is the expected behavior: better-trained models produce more focused,
 shorter outputs at a given temperature, not longer ones.
+
+## Round 18 examples (latest)
+
+6 examples at temperature=1.0, top_k=50. Round-18 is the FIGARO-aligned
+architecture rewrite: description-only encoder (no VQ-VAE latent), explicit
+bar_embedding and position_embedding for the decoder, separate encoder
+(2 layers) / decoder (4 layers). Trained 30 epochs total via three
+`--resume` sessions (smoke 3ep, then 10ep + 10ep + 10ep). Final val=1.1810
+(real, log file `training_round18_30ep.log` corroborates).
+
+| # | Maqam | Singer | Latent idx | Temp | Notes | Measures | Alters (incl. ±0.5) |
+|---|---|---|---|---|---|---|---|
+| 01 | Kurd | Abdel Halim Hafez | 5 | 1.0 | 40 | 14 | 4 (4 sharps) |
+| 02 | Bayat | Abdel Halim Hafez | 22 | 1.0 | 40 | 16 | 8 (1 quarter-tone, 7 sharps) |
+| 03 | Rast | Abdel Halim Hafez | 46 | 1.0 | 41 | 13 | 9 (2 quarter-tones, 7 sharps) |
+| 04 | Huzam | Abdel Halim Hafez | 65 | 1.0 | 44 | **25** | 12 (12 sharps) |
+| 05 | Nahawand | Fairuz | 163 | 1.0 | 28 | 13 | 8 (8 sharps) |
+| 06 | Hijaz | Fairuz | 205 | 1.0 | 40 | 15 | 3 (3 sharps) |
+
+All 6:
+- Parse cleanly with strict ET
+- 0 bad octaves (all in valid 0-8 range)
+- **Sequential measure numbers 1-N** (round-10 measure-overflow fix preserved)
+- Multiple maqamat: Kurd, Bayat, Rast, Huzam, Nahawand, Hijaz (no Ajam this time)
+- Multiple singers: Hafez (4), Fairuz (2)
+
+### Notable: Huzam example (04)
+
+The Huzam piece is the **longest at 25 measures** (vs 14-16 for the others).
+This matches the pattern from round-15 where Huzam also produced the
+longest outputs (85 measures). Pitch class distribution:
+- G: 7 (tonic of Huzam)
+- C: 6, A: 6, D: 5, F: 4 (other scale degrees)
+- A1.0: 5 (sharp)
+
+The model did NOT emit alter=-0.5 microtones for Huzam this time (vs 19
+quarter-tones in round-15 example 11). This is consistent with the
+val_loss=1.1810 model being less exploratory than the round-15 model was —
+sharps (alter=1.0) dominate the alter distribution because they appear
+much more frequently in training data than quarter-tones.
+
+### Quarter-tone microtones
+
+Of the 6 examples, **2 contain real quarter-tones** (alter=±0.5):
+- Bayat (l22): 1 alter=-0.5
+- Rast (l46): 2 alter=-0.5
+
+The other 4 examples emit only alter=1.0 (standard sharps). At val_loss=1.18
+the model is more confident in the higher-probability sharps than the
+longer-tail quarter-tones. This will improve with more training (the r17
+commit's claim of val=1.10 was about this regime — see audit-round-18.md).
+
+### Quality progression round-17 → round-18
+
+Note count went **down** (54 → ~39 average) for the same reasons as
+round-15 → round-17: a lower-loss model terminates sequences earlier.
+Round-18 also uses a smaller model (5.34M params vs ~8M for r17), so the
+note count is naturally lower at comparable temperature. The trade-off
+is architectural simplicity (no VQ-VAE, fewer moving parts) at the cost
+of a few notes per piece.
 
 ## Round 9 examples (50-epoch, pre-fix)
 
