@@ -79,8 +79,13 @@ def _flush_note_buffer(note_buffer, instrument_map, measures, part_map,
         measures[(pid, current_bar)] = meas
 
     if current_tick > last_tick:
-        forward = ET.SubElement(meas, 'forward')
-        ET.SubElement(forward, 'duration').text = str(current_tick - last_tick)
+        # MusicXML 4.0 spec: <forward> MUST be wrapped in <note>,
+        # not a direct child of <measure>. Wrap as a rest note so
+        # MuseScore and other strict parsers accept the file.
+        rest_note = ET.SubElement(meas, 'note')
+        ET.SubElement(rest_note, 'rest')
+        ET.SubElement(rest_note, 'duration').text = str(current_tick - last_tick)
+        ET.SubElement(rest_note, 'voice').text = '1'
 
     note_el = ET.SubElement(meas, 'note')
     pitch_val = note_buffer.get('pitch')
@@ -341,9 +346,12 @@ def reconstruct_musicxml_from_events(input_or_events, output_xml_path: str):
                         m = ET.SubElement(part_map[DEFAULT_PART_ID], 'measure',
                                           number=str(current_bar))
                         measures[(DEFAULT_PART_ID, current_bar)] = m
-                        # Emit a forward for the overflow in the new measure
-                        fwd = ET.SubElement(m, 'forward')
-                        ET.SubElement(fwd, 'duration').text = str(overflow)
+                        # Emit a rest note for the overflow in the new measure.
+                        # MusicXML 4.0: <forward> must be wrapped in <note>.
+                        rest_note = ET.SubElement(m, 'note')
+                        ET.SubElement(rest_note, 'rest')
+                        ET.SubElement(rest_note, 'duration').text = str(overflow)
+                        ET.SubElement(rest_note, 'voice').text = '1'
 
             elif ev.startswith(PITCH_KEY + "_"):
                 # Round-9: flush any orphaned pitch from the buffer

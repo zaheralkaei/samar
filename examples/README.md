@@ -245,6 +245,19 @@ which depends on prior operations. For reproducible examples, set
 `torch.manual_seed(N)` before generation (not currently exposed via CLI
 flag in `samar/generating.py` — would be a useful future addition).
 
+### MuseScore compatibility note
+
+Round-18 generation outputs were originally written with `<forward>`
+elements as direct children of `<measure>`, which is NOT valid per
+the MusicXML 4.0 specification. MuseScore (and other strict parsers)
+flag these files as "corrupted" and require clicking "Open Anyway"
+to load them. As of commit fixing this:
+
+**Reconstruct fix (`samar/reconstructor.py`)**: every `<forward>`
+element is now wrapped in a `<note><rest/></note>` element so the
+file is valid MusicXML 4.0. Rests now appear as proper rest notes
+in MuseScore instead of being silently dropped.
+
 ## Round 18 MIDI v2 examples (control experiment)
 
 This is a **control experiment** to test the hypothesis that the r18
