@@ -56,7 +56,8 @@ def _load_tokenizer():
 class SamarTransformerTrainer:
     def __init__(self, model, latent_path=None, batch_size=16, lr=1e-4,
                  context_size=256, val_fraction=0.1, gradient_clip=1.0,
-                 warmup_steps=100, tokenizer=None):
+                 warmup_steps=100, tokenizer=None, weights_path=None,
+                 config_path=None, round_tag=18):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = model.to(self.device)
         self.batch_size = batch_size
@@ -65,6 +66,9 @@ class SamarTransformerTrainer:
         self.gradient_clip = gradient_clip
         self.warmup_steps = warmup_steps
         self.tokenizer = tokenizer or _load_tokenizer()
+        self.weights_path = weights_path or os.path.join(CHECKPOINT_DIR, "samar_transformer.pt")
+        self.config_path = config_path or os.path.join(CHECKPOINT_DIR, "samar_transformer_config.json")
+        self.round_tag = round_tag
 
         self.optimizer = None
         self.scheduler = None
@@ -144,7 +148,7 @@ class SamarTransformerTrainer:
         return optimizer, scheduler
 
     def save_model(self, epoch=None, best_val=None, is_best=False):
-        os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+        os.makedirs(os.path.dirname(self.weights_path) or ".", exist_ok=True)
         state = {
             "model_state_dict": self.model.state_dict(),
             "epoch": epoch,
@@ -152,20 +156,20 @@ class SamarTransformerTrainer:
             "lr": self.lr,
             "warmup_steps": self.warmup_steps,
             "context_size": self.context_size,
-            "round": 18,
+            "round": self.round_tag,
         }
         if self.optimizer is not None:
             state["optimizer_state_dict"] = self.optimizer.state_dict()
         if self.scheduler is not None:
             state["scheduler_state_dict"] = self.scheduler.state_dict()
-        torch.save(state, WEIGHTS_PATH)
+        torch.save(state, self.weights_path)
         config = self.model.get_config()
-        with open(CONFIG_PATH, "w") as f:
+        with open(self.config_path, "w") as f:
             json.dump(config, f, indent=2)
-        print(f"[trainer] Saved weights -> {WEIGHTS_PATH}")
-        print(f"[trainer] Saved config  -> {CONFIG_PATH}")
+        print(f"[trainer] Saved weights -> {self.weights_path}")
+        print(f"[trainer] Saved config  -> {self.config_path}")
         if is_best:
-            best_path = WEIGHTS_PATH.replace(".pt", "_best.pt")
+            best_path = self.weights_path.replace(".pt", "_best.pt")
             torch.save(state, best_path)
             print(f"[trainer] Saved best   -> {best_path}")
 
@@ -239,6 +243,15 @@ if __name__ == "__main__":
     parser.add_argument("--warmup-steps", type=int, default=100)
     parser.add_argument("--latent-path", type=str, default=None)
     parser.add_argument("--resume", type=str, default=None)
+    parser.add_argument("--weights-path", type=str, default=None,
+                        help="Where to save the trained weights. Default: "
+                             "checkpoints/samar_transformer.pt")
+    parser.add_argument("--config-path", type=str, default=None,
+                        help="Where to save the model config. Default: "
+                             "checkpoints/samar_transformer_config.json")
+    parser.add_argument("--round", type=int, default=18,
+                        help="Round tag written into checkpoint metadata "
+                             "(helps distinguish runs).")
     args = parser.parse_args()
 
     if args.latent_path:
@@ -296,6 +309,9 @@ if __name__ == "__main__":
         val_fraction=0.1,
         gradient_clip=1.0,
         warmup_steps=args.warmup_steps,
+        weights_path=args.weights_path,
+        config_path=args.config_path,
+        round_tag=args.round,
     )
 
     if _resume_loaded is not None:
