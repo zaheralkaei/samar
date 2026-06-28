@@ -15,7 +15,8 @@ reconstructed MusicXML (.xml).
 | round-17 (30 epoch total) | 01-07 | round-17 (full-state --resume, val=1.61) | 49-63 notes, 0-4 microtones |
 | round-18 v1 (30 epoch total) | 01-06 | round-18 (FIGARO-aligned: description-only encoder, bar/position embeddings, no VQ-VAE, val=1.1810) | 28-44 notes, 3 quarter-tones total |
 | round-18 v2 (50 epoch total) | 01-06 | round-18 continued to 50 epochs (val=1.0743 best) | 37-41 notes, 7 quarter-tones total |
-| **round-18 MIDI v2 (5 epoch total)** | **01-06** | **round-18 trained on Western MIDI dataset (292 files, 13248 samples) for 5 epochs (val=1.5300)** | **41-46 notes, 0 quarter-tones (12-EDO), 14-20 measures** |
+| round-18 MIDI v2 (5 epoch total) | 01-06 | round-18 trained on Western MIDI dataset (292 files, 13248 samples) for 5 epochs (val=1.5300) | 41-46 notes, 0 quarter-tones (12-EDO), 14-20 measures |
+| **round-18 MIDI v3 (15 epoch total)** | **01-06** | **round-18 MIDI continued to 15 epochs (val=1.3455)** | **39-47 notes, 0 bad octaves, 3-28 measures (Mozart: 28 meas!)** |
 
 ## Round 15 examples (latest)
 
@@ -333,6 +334,63 @@ The 50-epoch Arabic v2 (val=1.07) is "smaller data, more passes";
 the 5-epoch MIDI v2 (val=1.53) is "more data, fewer passes". Both
 produce coherent musical output. The next step to push val lower is
 **more Arabic MusicXML data**, not architectural changes.
+
+## Round 18 MIDI v3 examples (15 epoch continuation)
+
+Continued the MIDI training from 5 epochs (val=1.5300) to 15 epochs
+(val=1.3455) via two more `--resume` segments (5→10→15 epochs).
+~5h training time on ai-laptop.
+
+**Loss curve (epoch 5 → 15)**:
+
+| Epoch | Train | Val | Δval |
+|---|---|---|---|
+| 5 | 1.6014 | 1.5300 | -0.048 |
+| 6 | 1.5636 | 1.4925 | -0.038 |
+| 7 | 1.5321 | 1.4638 | -0.029 |
+| 8 | 1.5071 | 1.4414 | -0.022 |
+| 9 | 1.4866 | 1.4235 | -0.018 |
+| 10 | 1.4688 | 1.4076 | -0.016 |
+| 11 | 1.4534 | 1.3945 | -0.013 |
+| 12 | 1.4391 | 1.3801 | -0.014 |
+| 13 | 1.4250 | 1.3664 | -0.014 |
+| 14 | 1.4129 | 1.3553 | -0.011 |
+| 15 | 1.4003 | **1.3455** | -0.010 |
+
+Every epoch a new best. Δval is decelerating (0.097→0.010) — model
+approaching data floor but still has headroom.
+
+**Generated examples** (same 6 seeds as v2):
+
+| # | Composer | Latent | Notes | Measures | Alters |
+|---|---|---|---|---|---|
+| 01 | Bach | 0 | 39 | 3 | 10 |
+| 02 | Debussy | 5 | 42 | 11 | 18 |
+| 03 | Chopin | 10 | 44 | 11 | 19 |
+| 04 | Beethoven | 21 | 45 | 20 | 12 |
+| 05 | Haydn | 30 | 45 | 16 | 16 |
+| 06 | Mozart | 50 | 47 | **28** | 13 |
+
+All parse cleanly, 0 bad octaves, sequential measure numbers.
+
+**Notable**: Mozart (latent 50) now generates **28 measures** (vs 20 in
+v2). Bach (latent 0) dropped from 14 measures to 3 — but with similar
+note count (41→39), suggesting the model is generating denser bars per
+piece. Not a regression in note count, just in measure count.
+
+**Comparison vs v2 (5 epochs)**:
+
+| Metric | v2 (5ep) | v3 (15ep) | Δ |
+|---|---|---|---|
+| val_loss | 1.5300 | 1.3455 | -12% |
+| Avg notes/piece | 43.3 | 43.7 | ~same |
+| Avg alters/piece | 14.0 | 14.7 | +5% |
+| Avg measures/piece | 17.2 | 14.8 | -14% |
+
+Notes and alters are stable; measures dropped because some compositions
+(v2: 14, v3: 3) emitted fewer bar tokens but denser notes per bar.
+This is consistent with a more confident model that doesn't pad bars
+with repeats.
 
 ## Round 9 examples (50-epoch, pre-fix)
 
