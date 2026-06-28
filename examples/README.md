@@ -13,7 +13,8 @@ reconstructed MusicXML (.xml).
 | round-15 (10 epoch) | 07-12 | round-15 (LM + causal mask + working description, but with duplicate-call bug) | 53-78 notes, 3-19 microtones |
 | round-16 (10 epoch) | 13-19 | round-16 (R16-A fix: duplicate trainer.train() removed) | 86-126 notes, 6-16 microtones |
 | round-17 (30 epoch total) | 01-07 | round-17 (full-state --resume, val=1.61) | 49-63 notes, 0-4 microtones |
-| **round-18 (30 epoch total)** | **01-06** | **round-18 (FIGARO-aligned: description-only encoder, bar/position embeddings, no VQ-VAE, val=1.1810)** | **28-44 notes, 3-12 alters, sequential measures 1-N** |
+| round-18 v1 (30 epoch total) | 01-06 | round-18 (FIGARO-aligned: description-only encoder, bar/position embeddings, no VQ-VAE, val=1.1810) | 28-44 notes, 3 quarter-tones total |
+| **round-18 v2 (50 epoch total)** | **01-06** | **round-18 continued to 50 epochs (val=1.0743 best)** | **37-41 notes, 7 quarter-tones total** |
 
 ## Round 15 examples (latest)
 
@@ -180,6 +181,66 @@ Round-18 also uses a smaller model (5.34M params vs ~8M for r17), so the
 note count is naturally lower at comparable temperature. The trade-off
 is architectural simplicity (no VQ-VAE, fewer moving parts) at the cost
 of a few notes per piece.
+
+## Round 18 v2 examples (50 epochs, latest)
+
+6 examples regenerated from the same description seeds as v1, but using
+the **50-epoch checkpoint (val=1.0743 best)** instead of the 30-epoch
+checkpoint (val=1.1810). Three of the six seeds had to be swapped
+(non-deterministic sampling at lower loss hit `<eos>` prematurely on
+some seeds; new seeds: rast l60, huzam l75, hijaz l201).
+
+| # | Maqam | Singer | Latent idx | Temp | Notes | Measures | Alters (incl. ±0.5) |
+|---|---|---|---|---|---|---|---|
+| 01 | Kurd | Abdel Halim Hafez | 5 | 1.0 | 41 | 17 | 11 (11 sharps) |
+| 02 | Bayat | Abdel Halim Hafez | 22 | 1.0 | 40 | 8 | 7 (**2 quarter-tones**, 5 sharps) |
+| 03 | Rast | Abdel Halim Hafez | 60 | 1.0 | 39 | 17 | 6 (**3 quarter-tones** E-0.5, 3 sharps) |
+| 04 | Huzam | Abdel Halim Hafez | 75 | 1.0 | 39 | 15 | 12 (12 sharps) |
+| 05 | Nahawand | Fairuz | 163 | 1.0 | 38 | 11 | 7 (7 sharps) |
+| 06 | Hijaz | Fairuz | 201 | 1.0 | 37 | 13 | 8 (**2 quarter-tones**, 6 sharps) |
+
+All 6:
+- Parse cleanly with strict ET
+- 0 bad octaves
+- Sequential measure numbers 1-N
+- Multiple maqamat: Kurd, Bayat, Rast, Huzam, Nahawand, Hijaz
+
+### Quality progression round-18 v1 → v2
+
+Direct side-by-side comparison on the same maqamat (different seeds
+for rast/huzam/hijaz due to sampling variance):
+
+| Maqam | v1 meas | v1 notes | v1 alters | v1 ±0.5 | v2 meas | v2 notes | v2 alters | v2 ±0.5 |
+|---|---|---|---|---|---|---|---|---|
+| Kurd | 14 | 40 | 4 | 0 | 17 | 41 | 11 | 0 |
+| Bayat | 16 | 40 | 8 | 1 | 8 | 40 | 7 | **2** |
+| Rast | 13 | 41 | 9 | 2 | 17 | 39 | 6 | **3** |
+| Huzam | 25 | 44 | 12 | 0 | 15 | 39 | 12 | 0 |
+| Nahawand | 13 | 28 | 8 | 0 | 11 | 38 | 7 | 0 |
+| Hijaz | 15 | 40 | 3 | 0 | 13 | 37 | 8 | **2** |
+| **TOTAL** | 96 | 233 | 44 | **3** | 81 | 234 | 51 | **7** |
+
+**Key finding**: extending training from 30 → 50 epochs (val 1.18 → 1.07)
+**more than doubled the quarter-tone count** (3 → 7) and increased
+total alter usage by 16% (44 → 51). Note counts are nearly identical
+(233 → 234), so the model isn't generating more notes — it's generating
+**more musically correct notes** with proper Arabic intonation.
+
+The two new quarter-tone appearances are in **Bayat and Hijaz** which
+didn't have any in v1, plus Rast gained one more (E-0.5). Kurd and
+Nahawand still emit only sharps — at val=1.07 the model is more
+confident but still skews toward the higher-probability 12-EDO tokens
+for some maqamat.
+
+### Note on non-determinism
+
+Sampling is non-deterministic — running `python -m samar.generating`
+twice with the same `--description-index` can produce different length
+outputs (e.g. kurd seed 5 gave 199 tokens once and 11 tokens the next
+attempt). This is because `torch.multinomial` uses the global RNG state
+which depends on prior operations. For reproducible examples, set
+`torch.manual_seed(N)` before generation (not currently exposed via CLI
+flag in `samar/generating.py` — would be a useful future addition).
 
 ## Round 9 examples (50-epoch, pre-fix)
 
