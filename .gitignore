@@ -7,6 +7,8 @@ __pycache__/
 *.ids
 data/tokenized/
 data/remi_txt/
+data/midi_as_xml/   # generated from data/midi_dataset/*.mid by samar/convert_midi_to_xml.py; not tracked (110MB)
+data/midi_dataset/  # raw MIDI source files (7.6MB); user-provided, not tracked
 
 # Large MIDI latents (1.8GB, exceeds git size limit; reproduce with:
 #   python -m samar.precompute_midi_latents)
