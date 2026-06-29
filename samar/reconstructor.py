@@ -31,6 +31,31 @@ DEFAULT_INSTRUMENT = "Piano"  # matches P1 default below
 # instrument_map below.
 DEFAULT_PART_ID = "P1"
 
+# Round-19: capacity for a 4/4 measure in our chosen divisions units.
+# With divisions=DEFAULT_POS_PER_QUARTER=12 and time sig 4/4, a full bar
+# is 12 * 4 = 48 ticks. Used throughout the post-processing step and
+# overflow-splitting logic to know when a measure is full.
+BAR_CAPACITY_4_4 = DEFAULT_POS_PER_QUARTER * 4
+
+# Standard note durations at divisions=480 (MuseScore 4 strictly enforces these).
+# Anything else (like 320, 80, 40) gets rounded up internally, breaking the
+# 4/4 capacity check. We snap emitted durations to the nearest of these.
+# Values in the order: 64th, 32nd, dotted 32nd, 16th, dotted 16th, 8th,
+# dotted 8th, quarter, dotted quarter, double-dotted quarter, half,
+# dotted half, whole.
+STANDARD_DURATIONS = [15, 30, 45, 60, 90, 120, 180, 240, 360, 480, 720,
+                     840, 960, 1440, 1920]
+
+
+def _quantize_duration(dur):
+    """Round an emitted duration to the nearest standard note value at
+    divisions=480. MuseScore 4 silently rounds up non-standard values
+    internally (e.g. 320 -> 360, 80 -> 90), which causes the measure's
+    total duration to overflow 4/4 capacity. Snapping to the nearest
+    standard value avoids this. If the input is already exactly on a
+    standard value, it's returned unchanged."""
+    return min(STANDARD_DURATIONS, key=lambda s: abs(s - dur))
+
 
 def _ensure_attributes(measure):
     """Add MusicXML <attributes> block to a measure (time, key, clef).
@@ -84,7 +109,7 @@ def _flush_note_buffer(note_buffer, instrument_map, measures, part_map,
         # MuseScore and other strict parsers accept the file.
         rest_note = ET.SubElement(meas, 'note')
         ET.SubElement(rest_note, 'rest')
-        ET.SubElement(rest_note, 'duration').text = str(current_tick - last_tick)
+        ET.SubElement(rest_note, 'duration').text = str(_quantize_duration(int(current_tick - last_tick)))
         ET.SubElement(rest_note, 'voice').text = '1'
 
     note_el = ET.SubElement(meas, 'note')
@@ -121,7 +146,7 @@ def _flush_note_buffer(note_buffer, instrument_map, measures, part_map,
     idx = min(note_buffer.get('duration_idx', 0), len(DEFAULT_DURATION_BINS) - 1)
     dur_pos = DEFAULT_DURATION_BINS[idx]
     divisions = int(round(dur_pos * original_divisions / DEFAULT_POS_PER_QUARTER))
-    ET.SubElement(note_el, 'duration').text = str(divisions)
+    ET.SubElement(note_el, 'duration').text = str(_quantize_duration(int(divisions)))
     ET.SubElement(note_el, 'voice').text = '1'
 
     # NOTE: we cannot update `last_tick` from here because we don't
@@ -208,8 +233,10 @@ def reconstruct_musicxml_from_events(input_or_events, output_xml_path: str):
                             keep = capacity - current_tick
                             overflow = orig_dur - keep
                             if keep > 0 and overflow > 0:
-                                # Trim and split
-                                dur_el.text = str(keep)
+                                # Trim and split (quantize both halves to
+                                # standard durations to avoid MuseScore
+                                # "Incomplete measure" errors)
+                                dur_el.text = str(_quantize_duration(keep))
                                 # Create next measure
                                 bar_count += 1
                                 current_bar = bar_count
@@ -233,7 +260,7 @@ def reconstruct_musicxml_from_events(input_or_events, output_xml_path: str):
                                     if child.tag in ('duration', 'voice'):
                                         continue
                                     new_note.append(copy.deepcopy(child))
-                                ET.SubElement(new_note, 'duration').text = str(overflow)
+                                ET.SubElement(new_note, 'duration').text = str(_quantize_duration(int(overflow)))
                                 ET.SubElement(new_note, 'voice').text = '1'
                                 return
                             elif keep <= 0:
@@ -258,7 +285,7 @@ def reconstruct_musicxml_from_events(input_or_events, output_xml_path: str):
                                     if child.tag in ('duration', 'voice'):
                                         continue
                                     new_note.append(copy.deepcopy(child))
-                                ET.SubElement(new_note, 'duration').text = str(orig_dur)
+                                ET.SubElement(new_note, 'duration').text = str(_quantize_duration(int(orig_dur)))
                                 ET.SubElement(new_note, 'voice').text = '1'
                                 last_tick = orig_dur
                                 return
@@ -350,7 +377,7 @@ def reconstruct_musicxml_from_events(input_or_events, output_xml_path: str):
                         # MusicXML 4.0: <forward> must be wrapped in <note>.
                         rest_note = ET.SubElement(m, 'note')
                         ET.SubElement(rest_note, 'rest')
-                        ET.SubElement(rest_note, 'duration').text = str(overflow)
+                        ET.SubElement(rest_note, 'duration').text = str(_quantize_duration(int(overflow)))
                         ET.SubElement(rest_note, 'voice').text = '1'
 
             elif ev.startswith(PITCH_KEY + "_"):
@@ -488,11 +515,11 @@ def reconstruct_musicxml_from_events(input_or_events, output_xml_path: str):
                                     if c2.tag in ('duration', 'voice'):
                                         continue
                                     new_note.append(copy.deepcopy(c2))
-                                ET.SubElement(new_note, 'duration').text = str(overflow)
+                                ET.SubElement(new_note, 'duration').text = str(_quantize_duration(int(overflow)))
                                 ET.SubElement(new_note, 'voice').text = '1'
                             else:
                                 # forward
-                                ET.SubElement(new_note, 'duration').text = str(overflow)
+                                ET.SubElement(new_note, 'duration').text = str(_quantize_duration(int(overflow)))
                             new_meas.append(new_note)
                             part.append(new_meas)
                             current_total = capacity  # current is now full
@@ -519,6 +546,61 @@ def reconstruct_musicxml_from_events(input_or_events, output_xml_path: str):
                             first = all_measures_in_part[0]
                             if first.find('attributes') is None:
                                 _ensure_attributes(first)
+
+                # Round-19: pad under-filled measures with a rest note so
+                                # MuseScore doesn't complain about "Incomplete measure".
+                                # If a measure's notes total < 1920 ticks (4/4 capacity),
+                                # append a <note><rest/></note> with the missing duration
+                                # to fill the bar. MuseScore would otherwise reject the file.
+                                # NOTE: we use the EXACT missing duration (not quantized) here
+                                # because the rest note is the only element in the missing
+                                # space; quantizing could push the total over 1920 and cause
+                                # an infinite split/pad loop.
+                                for meas in part.findall('measure'):
+                                    total = 0
+                                    for child in meas:
+                                        if child.tag == 'note':
+                                            d = child.find('duration')
+                                            if d is not None and d.text:
+                                                total += int(d.text)
+                                        elif child.tag == 'forward':
+                                            d = child.find('duration')
+                                            if d is not None and d.text:
+                                                total += int(d.text)
+                                    if 0 < total < 1920:
+                                        missing = 1920 - total
+                                        rest_note = ET.SubElement(meas, 'note')
+                                        ET.SubElement(rest_note, 'rest')
+                                        # Snap to nearest standard duration, then clamp to
+                                        # avoid overflow (which would re-trigger the split
+                                        # loop). If snapped value > missing, just use missing.
+                                        snapped = _quantize_duration(missing)
+                                        if snapped > missing:
+                                            snapped = missing
+                                        ET.SubElement(rest_note, 'duration').text = str(snapped)
+                                        ET.SubElement(rest_note, 'voice').text = '1'
+                                    elif total == 0:
+                                        # Empty measure (between Bar tokens the model skipped).
+                                        rest_note = ET.SubElement(meas, 'note')
+                                        ET.SubElement(rest_note, 'rest')
+                                        ET.SubElement(rest_note, 'duration').text = '1920'
+                                        ET.SubElement(rest_note, 'voice').text = '1'
+                                    elif total > 1920:
+                                        # Quantization rounded some notes up; clip the last
+                                        # note to make total == 1920 exactly. Find the last
+                                        # note and reduce its duration.
+                                        excess = total - 1920
+                                        for child in reversed(list(meas)):
+                                            if child.tag == 'note':
+                                                d = child.find('duration')
+                                                if d is not None and d.text:
+                                                    orig = int(d.text)
+                                                    if orig > excess:
+                                                        d.text = str(orig - excess)
+                                                        break
+                                                    else:
+                                                        excess -= orig
+                                                        d.text = '0'
 
         tree.write(output_xml_path, encoding='utf-8', xml_declaration=True)
     else:

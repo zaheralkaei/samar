@@ -251,12 +251,39 @@ Round-18 generation outputs were originally written with `<forward>`
 elements as direct children of `<measure>`, which is NOT valid per
 the MusicXML 4.0 specification. MuseScore (and other strict parsers)
 flag these files as "corrupted" and require clicking "Open Anyway"
-to load them. As of commit fixing this:
+to load them. This was fixed in commit `b4ba469`:
 
-**Reconstruct fix (`samar/reconstructor.py`)**: every `<forward>`
+**Reconstruct fix #1 (`samar/reconstructor.py`)**: every `<forward>`
 element is now wrapped in a `<note><rest/></note>` element so the
 file is valid MusicXML 4.0. Rests now appear as proper rest notes
 in MuseScore instead of being silently dropped.
+
+Even with #1 fixed, MuseScore 4 still rejected the files with
+`Incomplete measure` errors. Investigation via test fixtures
+(`tests/_tmp_musescore_diag/*.xml`) revealed that MuseScore 4
+silently rounds up non-standard note durations internally (e.g.
+320 ticks at div=480 → 360 ticks). When several such rounded
+durations accumulate in a measure, the measure's total ticks
+exceed 1920 (4/4 capacity), triggering the rejection. The fix:
+
+**Reconstruct fix #2**: added `_quantize_duration()` helper in
+`samar/reconstructor.py` that snaps every emitted duration to the
+nearest standard note value at div=480:
+- Standard values: 15 (64th), 30 (32nd), 45 (dotted 32nd),
+  60 (16th), 90 (dotted 16th), 120 (8th), 180 (dotted 8th),
+  240 (quarter), 360 (dotted quarter), 480 (half), 720
+  (dotted half), 960 (whole), etc.
+- Applied at every emission site (8 total).
+- A clipping step was also added to handle overflow caused by
+  quantization rounding.
+
+All 24 r18 example XMLs (regenerated) now convert to PDF in
+MuseScore 4.7.3 without any "Incomplete measure" errors.
+
+Removed r18 v1 example files (`01_r18_l5_t10.xml` etc.) since
+the round-30 checkpoint they were generated from was overwritten
+by the round-50 training. The current `_best.pt` is val=1.0743
+(round 50), not val=1.1810 (round 30).
 
 ## Round 18 MIDI v2 examples (control experiment)
 
