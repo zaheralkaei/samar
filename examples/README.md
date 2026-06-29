@@ -19,6 +19,7 @@ reconstructed MusicXML (.xml).
 | round-18 MIDI v3 (15 epoch total) | 01-06 | round-18 MIDI continued to 15 epochs (val=1.3455) | 39-47 notes, 0 bad octaves, 3-28 measures (Mozart: 28 meas!) |
 | **round-18 MIDI v4 (25 epoch total)** | **01-06** | **round-18 MIDI continued to 25 epochs (val=1.2629)** | **28-44 notes, 0 bad octaves, 7-16 measures** |
 | **round-20 v2 (15 epoch total)** | **01-05** | **round-20 (vocab 1265 with Tie/Dot/Tuplet/Chord tokens, val=1.3211)** | **28-55 notes, 2 ties, 6 dots, 4 tuplets, 1 chord** |
+| **round-20 v3 (25 epoch total, t=0.8)** | **01-05** | **round-20 continued to 25 epochs (val=1.2245)** | **35-47 notes, 3 ties, 1 dot, 1 tuplet, 0 chords** |
 
 ## Round 15 examples (latest)
 
@@ -577,3 +578,23 @@ features (tie, dot, tuplet, chord) appear in a single 55-note piece.
 The 5-epoch checkpoint (val 1.65) showed 0 ties and 0 chords in 5
 generations; the 15-epoch checkpoint (val 1.32) shows all four. Continued
 training should keep increasing feature density.
+
+### Round 20 v3 (25 epoch, t=0.8)
+
+5 more epochs of training (val 1.32 → 1.22). Output is more reliable
+(consistent 35-47 note range, no degenerate short generations) but
+the model has settled into a tighter distribution and emits fewer
+complex structural features per piece than at epoch 15.
+
+| # | Maqam | Latent idx | Temp | Notes | Ties | Dots | Tuplets | Chords |
+|---|---|---|---|---|---|---|---|---|
+| 01 | Kurd | 0 | 0.8 | 40 | 0 | 0 | 0 | 0 |
+| 02 | Bayat | 5 | 0.8 | 35 | 0 | 1 | 0 | 0 |
+| 03 | Nahawand | 10 | 0.8 | 47 | 0 | 0 | 0 | 0 |
+| 04 | Saba | 50 | 0.8 | 42 | 1 | 0 | 0 | 0 |
+| 05 | Hijaz | 100 | 0.8 | 41 | 1 | 0 | 1 | 0 |
+
+`examples/05_r20v3_hijaz_l100.xml` has the most features (1 tie, 1
+tuplet). At temp=1.0 the model occasionally collapses to very short
+outputs (1-15 notes); temp=0.8 gives reliable but less varied output.
+Higher temperatures (1.2) give more chaos without more features.
