@@ -18,6 +18,7 @@ reconstructed MusicXML (.xml).
 | round-18 MIDI v2 (5 epoch total) | 01-06 | round-18 trained on Western MIDI dataset (292 files, 13248 samples) for 5 epochs (val=1.5300) | 41-46 notes, 0 quarter-tones (12-EDO), 14-20 measures |
 | round-18 MIDI v3 (15 epoch total) | 01-06 | round-18 MIDI continued to 15 epochs (val=1.3455) | 39-47 notes, 0 bad octaves, 3-28 measures (Mozart: 28 meas!) |
 | **round-18 MIDI v4 (25 epoch total)** | **01-06** | **round-18 MIDI continued to 25 epochs (val=1.2629)** | **28-44 notes, 0 bad octaves, 7-16 measures** |
+| **round-20 v2 (15 epoch total)** | **01-05** | **round-20 (vocab 1265 with Tie/Dot/Tuplet/Chord tokens, val=1.3211)** | **28-55 notes, 2 ties, 6 dots, 4 tuplets, 1 chord** |
 
 ## Round 15 examples (latest)
 
@@ -554,3 +555,25 @@ python -m samar.generating \
 Round-15 with only 10 epochs produces richer output than round-9 with
 50 epochs — the architectural fixes (causal mask + working description)
 pay off.
+
+## Round 20 examples (Tie / Dot / Tuplet / Chord)
+
+Round-20 introduces 11 new vocab tokens: `Tie_Start`, `Tie_Stop`,
+`Dot_0/1/2`, `Tuplet_3/5/6/7/12`, `Chord_On`. After 15 epochs of
+fresh training on the expanded vocab (val 4.20 → 1.32), the model
+emits all four feature types in its output.
+
+| # | Maqam | Latent idx | Temp | Notes | Ties | Dots | Tuplets | Chords |
+|---|---|---|---|---|---|---|---|---|
+| 01 | Kurd | 0 | 1.0 | 32 | 0 | 0 | 2 | 0 |
+| 02 | Bayat | 5 | 1.0 | 28 | 1 | 0 | 1 | 0 |
+| **03** | **Nahawand** | **10** | **1.0** | **55** | **1** | **2** | **1** | **1** |
+| 04 | Saba | 50 | 1.0 | 46 | 0 | 1 | 0 | 0 |
+| 05 | Hijaz | 100 | 1.0 | 37 | 0 | 3 | 0 | 0 |
+
+`examples/03_r20v2_nahawand_l10.xml` is the standout — all four new
+features (tie, dot, tuplet, chord) appear in a single 55-note piece.
+
+The 5-epoch checkpoint (val 1.65) showed 0 ties and 0 chords in 5
+generations; the 15-epoch checkpoint (val 1.32) shows all four. Continued
+training should keep increasing feature density.
