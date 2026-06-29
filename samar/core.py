@@ -246,12 +246,22 @@ class MusicXMLParser:
                     # Each is detected via direct child element (not
                     # findtext) since they have no text content.
                     # <tie type="start"/>, <tie type="stop"/>
+                    # (top-level <tie> is the notation element;
+                    # <tied> inside <notations> is the sound element;
+                    # both convey the same information and we accept
+                    # either, since midi_to_xml.py emits <tied>.)
                     tie_starts = sum(
                         1 for t in note.findall("tie")
+                        if t.get("type") == "start"
+                    ) + sum(
+                        1 for t in note.findall("notations/tied")
                         if t.get("type") == "start"
                     )
                     tie_stops = sum(
                         1 for t in note.findall("tie")
+                        if t.get("type") == "stop"
+                    ) + sum(
+                        1 for t in note.findall("notations/tied")
                         if t.get("type") == "stop"
                     )
                     # <dot/> (one or two children)
