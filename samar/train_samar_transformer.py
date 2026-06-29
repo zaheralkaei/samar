@@ -11,7 +11,17 @@ Round 18: Rewritten to match FIGARO figaro-expert architecture.
 
 import os
 import json
+
+# Round-21: force all BLAS/MKL/OpenMP threads to use all 8 CPU cores.
+# Without this the trainer only used 4 threads (~6% CPU efficiency on
+# the 8-core ai-laptop), making each batch take ~120s instead of ~7s.
+os.environ.setdefault("OMP_NUM_THREADS", "8")
+os.environ.setdefault("MKL_NUM_THREADS", "8")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "8")
+
 import torch
+torch.set_num_threads(8)
+
 from torch.utils.data import DataLoader, random_split
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
@@ -105,13 +115,19 @@ class SamarTransformerTrainer:
             print(f"[trainer] Split {len(full)} samples into "
                   f"{n_train} train / {n_val} val", flush=True)
 
+        # Round-21: num_workers=4 for parallel data loading. The
+        # dataloader was the bottleneck on the full 12,378-sample
+        # dataset (each batch waited ~80s for collate to finish even
+        # with 8 OMP threads doing the matmul work). 4 workers is
+        # enough to keep the GPU/CPU fed; 8 caused memory pressure
+        # on the 8-core ai-laptop.
         self.train_dataloader = DataLoader(
             self.train_dataset, batch_size=batch_size, shuffle=True,
-            collate_fn=samar_collate_fn,
+            collate_fn=samar_collate_fn, num_workers=4,
         )
         self.val_dataloader = DataLoader(
             self.val_dataset, batch_size=batch_size, shuffle=False,
-            collate_fn=samar_collate_fn,
+            collate_fn=samar_collate_fn, num_workers=4,
         )
 
     def _lr_lambda(self, step):
