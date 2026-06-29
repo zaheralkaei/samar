@@ -48,6 +48,11 @@ from .constants import (
     DEFAULT_VELOCITY_BINS,
     DEFAULT_RESOLUTION,
     DEFAULT_INSTRUMENT,  # fallback when <part-name> is missing
+    # Round-20: structural music token keys
+    TIE_KEY,
+    DOT_KEY,
+    TUPLET_KEY,
+    CHORD_KEY,
 )
 
 
@@ -88,9 +93,18 @@ def _parse_xml_root(path):
 
 
 class SamarNote:
-    """A single note (or rest) in the SAMAR format. Supports 24-EDO alters."""
+    """A single note (or rest) in the SAMAR format. Supports 24-EDO alters.
 
-    def __init__(self, start_tick, step, alter, octave, duration, instrument, velocity=64, is_rest=False):
+    Round-20: extended with structural attributes (tie, dots, tuplet,
+    chord) that were previously dropped by the parser. The tokenizer
+    reads these from MusicXML <tie/>, <dot/>, <time-modification/>,
+    <chord/> elements and emits corresponding tokens.
+    """
+
+    def __init__(self, start_tick, step, alter, octave, duration, instrument,
+                 velocity=64, is_rest=False,
+                 is_tied_start=False, is_tied_stop=False,
+                 dot_count=0, tuplet_num=1, is_chord_member=False):
         self.start_tick = int(start_tick)
         self.step = step
         self.alter = float(alter) if alter is not None else 0.0
@@ -99,6 +113,12 @@ class SamarNote:
         self.instrument = instrument
         self.velocity = int(velocity)
         self.is_rest = is_rest
+        # Round-20: structural attributes
+        self.is_tied_start = bool(is_tied_start)  # <tie type="start"/>
+        self.is_tied_stop = bool(is_tied_stop)    # <tie type="stop"/>
+        self.dot_count = int(dot_count) if dot_count is not None else 0  # 0/1/2
+        self.tuplet_num = int(tuplet_num) if tuplet_num else 1  # 3/5/7 (normal-notes=2)
+        self.is_chord_member = bool(is_chord_member)  # <chord/> present
 
     def to_24edo_pitch(self):
         """Convert to 24-EDO pitch space (MIDI pitch * 2).
@@ -197,15 +217,21 @@ class MusicXMLParser:
             current_tick = 0
             for measure in part.findall("measure"):
                 # Round-3 audit C4: tolerate editorial markers
-                # (e.g. ``X1``) in the measure ``number`` attribute.
+                # (e.g. ``X1``, ``X2`` for repeats) rather than numeric
+                # bar indices. The bare ``int(...)`` cast crashed 3
+                # files; we now fall back to the most recent numeric
+                # bar number.
                 raw_bar = measure.attrib.get("number", "1")
                 try:
                     bar_number = int(raw_bar)
                 except ValueError:
-                    # Use the bar counter from the time-signature map
-                    # (it tracks only the numeric bars). Fall back to
-                    # the previous numeric bar number if needed.
+                    # Editorial marker (X1, X2, ...) -- inherit the
+                    # most recent numeric bar number so the bar stays
+                    # tied to its predecessors.
                     bar_number = max(self.time_signatures.keys(), default=1)
+                # Round-20: cap at MAX_N_BARS-1 to avoid OOV Bar_N tokens
+                if bar_number >= 512:
+                    bar_number = 511
                 # Use this bar's time signature, falling back to 4/4 if
                 # the score never declared one (very rare in real XML).
                 beats, beat_type = self.time_signatures.get(bar_number, (4, 4))
@@ -216,13 +242,67 @@ class MusicXMLParser:
                     duration_divs = int(note.findtext("duration", default="1"))
                     tick_duration = duration_divs * ticks_per_division
 
+                    # Round-20: read structural MusicXML attributes.
+                    # Each is detected via direct child element (not
+                    # findtext) since they have no text content.
+                    # <tie type="start"/>, <tie type="stop"/>
+                    tie_starts = sum(
+                        1 for t in note.findall("tie")
+                        if t.get("type") == "start"
+                    )
+                    tie_stops = sum(
+                        1 for t in note.findall("tie")
+                        if t.get("type") == "stop"
+                    )
+                    # <dot/> (one or two children)
+                    # Round-20: cap dot_count at 2. The vocab only includes Dot_0/1/2;
+                    # a triple-dotted note (Dot_3) is exceedingly rare
+                    # (1 occurrence in 50 Arabic files) and would
+                    # encode as <unk> in the latents.
+                    dot_count = min(len(note.findall("dot")), 2)
+                    # <time-modification><actual-notes>3</actual-notes>
+                    #                      <normal-notes>2</normal-notes>
+                    tm = note.find("time-modification")
+                    tuplet_num = 1
+                    if tm is not None:
+                        actual = tm.findtext("actual-notes")
+                        if actual is not None:
+                            try:
+                                tuplet_num = int(actual)
+                            except ValueError:
+                                tuplet_num = 1
+                    # Round-20: cap tuplet_num at the largest value in
+                    # TUPLET_VALUES (12). Anything larger becomes <unk>
+                    # in the latents. 9- and 11-tuplets are theoretically
+                    # possible but vanishingly rare in our data.
+                    if tuplet_num > 12:
+                        tuplet_num = 12
+                    # <chord/> — note starts at same tick as previous note
+                    is_chord_member = note.find("chord") is not None
+
                     if rest:
-                        notes.append(SamarNote(current_tick, "C", 0, 4, tick_duration, instrument, velocity=64, is_rest=True))
+                        notes.append(SamarNote(
+                            current_tick, "C", 0, 4, tick_duration, instrument,
+                            velocity=64, is_rest=True,
+                            is_tied_start=(tie_starts > 0),
+                            is_tied_stop=(tie_stops > 0),
+                            dot_count=dot_count,
+                            tuplet_num=tuplet_num,
+                            is_chord_member=is_chord_member,
+                        ))
                     elif pitch is not None:
                         step = pitch.findtext("step", "C")
                         alter = pitch.findtext("alter", "0")
                         octave = pitch.findtext("octave", "4")
-                        notes.append(SamarNote(current_tick, step, alter, octave, tick_duration, instrument, velocity=64))
+                        notes.append(SamarNote(
+                            current_tick, step, alter, octave, tick_duration,
+                            instrument, velocity=64,
+                            is_tied_start=(tie_starts > 0),
+                            is_tied_stop=(tie_stops > 0),
+                            dot_count=dot_count,
+                            tuplet_num=tuplet_num,
+                            is_chord_member=is_chord_member,
+                        ))
 
                     current_tick += tick_duration
         return notes
@@ -359,13 +439,22 @@ class SAMARInputRepresentation:
         return np.mean(values)
 
     def _bar_index_for_tick(self, tick):
-        """Map a MIDI tick to a 1-based bar number for this piece's time signature."""
+        """Map a MIDI tick to a 1-based bar number for this piece's time signature.
+
+        Round-20: caps the result at MAX_N_BARS - 1 (= 511) to avoid
+        out-of-vocabulary Bar_N tokens. Long pieces (>512 bars) are
+        extremely rare in our training data; capping is safer than
+        growing the vocab by 1000+ tokens for marginal gain.
+        """
         beats, beat_type = self.time_sig
         quarters_per_bar = 4 * beats / beat_type
         ticks_per_bar = int(DEFAULT_RESOLUTION * quarters_per_bar)
         if ticks_per_bar <= 0:
             return 1
-        return tick // ticks_per_bar + 1
+        bar_num = tick // ticks_per_bar + 1
+        if bar_num >= 512:
+            bar_num = 511
+        return int(bar_num)
 
     def _notes_by_bar(self):
         """Group notes by 1-based bar number."""
@@ -500,6 +589,13 @@ class SAMARInputRepresentation:
             events.append(f"{TEMPO_KEY}_{tempo_idx}")
 
         notes_by_bar = self._notes_by_bar()
+        # Round-20: tracks when a previous note is tied to the next note.
+        # Round-20: tracks when a previous note is tied to the next note.
+        # After emitting a note with is_tied_start, the next emitted note
+        # (regardless of bar) needs to receive a Tie_Start BEFORE its Pitch
+        # so the reconstructor can add the <tie type="stop"/> element to
+        # it. We carry this across bar boundaries.
+        prev_was_starting_tie = False
         for bar_num in sorted(notes_by_bar.keys()):
             # Round-7: emit explicit Bar_N token at the start of each
             # bar (matches FIGARO's input_representation.get_remi_events
@@ -512,9 +608,35 @@ class SAMARInputRepresentation:
             # MuseScore displays 1-indexed measure numbers.
             events.append(f"{BAR_KEY}_{bar_num}")
             for note in notes_by_bar[bar_num]:
-                rel_tick = note.start_tick % ticks_per_bar
-                position = int(rel_tick / ticks_per_bar * positions_per_bar)
-                events.append(f"{POSITION_KEY}_{position}")
+                # Chord members don't get their own Position token --
+                # they share the previous note's start tick. We emit a
+                # Chord_On marker instead.
+                if note.is_chord_member:
+                    events.append(f"{CHORD_KEY}_On")
+                else:
+                    rel_tick = note.start_tick % ticks_per_bar
+                    position = int(rel_tick / ticks_per_bar * positions_per_bar)
+                    events.append(f"{POSITION_KEY}_{position}")
+
+                # Round-20: Tuplet_N BEFORE the note it applies to.
+                # Only emitted when this note is in a tuplet group
+                # (tuplet_num > 1). The reconstructor emits
+                # <time-modification> on the matching note.
+                if note.tuplet_num > 1:
+                    events.append(f"{TUPLET_KEY}_{note.tuplet_num}")
+
+                # Round-20: Dot_Y BEFORE the note it applies to.
+                # Captures <dot/> elements that were previously dropped.
+                if note.dot_count > 0:
+                    events.append(f"{DOT_KEY}_{note.dot_count}")
+
+                # Round-20: Tie_Start BEFORE Pitch -- signals "this
+                # note is the START of a tied run; the NEXT note
+                # should get <tie type='stop'/>." Set by the
+                # prev_was_starting_tie flag from the previous note.
+                if prev_was_starting_tie:
+                    events.append(f"{TIE_KEY}_Start")
+                    prev_was_starting_tie = False
 
                 if note.is_rest:
                     events.append(f"{PITCH_KEY}_Rest")
@@ -532,5 +654,16 @@ class SAMARInputRepresentation:
 
                 if note.instrument:
                     events.append(f"{INSTRUMENT_KEY}_{note.instrument}")
+
+                # Round-20: Tie_Stop AFTER Instrument -- signals "this
+                # note is the END of a tied run; should get
+                # <tie type='stop'/> in the output XML."
+                if note.is_tied_stop:
+                    events.append(f"{TIE_KEY}_Stop")
+
+                # Track for next iteration: if THIS note is a tie start,
+                # the NEXT note should emit Tie_Start.
+                if note.is_tied_start:
+                    prev_was_starting_tie = True
 
         return events

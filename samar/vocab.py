@@ -38,6 +38,11 @@ from .constants import (
     MEAN_PITCH_KEY,
     MEAN_VELOCITY_KEY,
     MEAN_DURATION_KEY,
+    # Round-20: structural music tokens
+    TIE_KEY,
+    DOT_KEY,
+    TUPLET_KEY,
+    TUPLET_VALUES,
 )
 
 class Tokens:
@@ -91,6 +96,13 @@ class Tokens:
             bar_tokens = [f'{bar_key}_{i}' for i in range(MAX_N_BARS)]
             position_tokens = [f'{position_key}_{i}' for i in range(MAX_BAR_LENGTH * 4 * DEFAULT_POS_PER_QUARTER)]
             time_sig_tokens = Tokens.get_time_signature_tokens(time_signature_key)
+            # Round-20: structural music tokens (ties, dots, tuplets, chord).
+            # These carry the MusicXML-level structure that the round-19
+            # audit found was being silently dropped by the tokenizer.
+            tie_tokens = [f'{TIE_KEY}_Start', f'{TIE_KEY}_Stop']
+            dot_tokens = [f'{DOT_KEY}_0', f'{DOT_KEY}_1', f'{DOT_KEY}_2']
+            tuplet_tokens = [f'{TUPLET_KEY}_{n}' for n in TUPLET_VALUES]
+            chord_tokens = [f'{CHORD_KEY}_On']
 
             return (
                 time_sig_tokens +
@@ -100,7 +112,11 @@ class Tokens:
                 velocity_tokens +
                 duration_tokens +
                 bar_tokens +
-                position_tokens
+                position_tokens +
+                tie_tokens +
+                dot_tokens +
+                tuplet_tokens +
+                chord_tokens
             )
 
 class Vocab:

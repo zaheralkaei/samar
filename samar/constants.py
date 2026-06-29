@@ -61,6 +61,20 @@ MEAN_PITCH_KEY = 'MeanPitch'
 MEAN_VELOCITY_KEY = 'MeanVelocity'
 MEAN_DURATION_KEY = 'MeanDuration'
 
+# Round-20: tokens for ties, dotted notes, tuplets, chords. These are
+# the structural MusicXML features the round-19 audit found missing.
+TIE_KEY = 'Tie'             # Tie_Start, Tie_Stop
+DOT_KEY = 'Dot'              # Dot_0 (plain), Dot_1 (dotted), Dot_2 (double-dotted)
+TUPLET_KEY = 'Tuplet'        # Tuplet_3, Tuplet_5, Tuplet_7 (normal-notes always 2)
+CHORD_KEY = 'Chord'          # Chord_On (non-first member of a chord group)
+
+# Discrete values for the new tokens
+DOT_PLAIN = 0
+DOT_SINGLE = 1
+DOT_DOUBLE = 2
+
+TUPLET_VALUES = [3, 5, 6, 7, 12]  # actual-notes count; normal-notes always 2
+
 # === Misc ===
 # Default instrument label when a ``<part>`` doesn't carry a ``<part-name>``.
 # Maps to the existing ``Instrument_Voice`` token in

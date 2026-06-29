@@ -24,7 +24,11 @@ _PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(_PACKAGE_DIR)
 
 # === Default configuration (round 18) ===
-DEFAULT_VOCAB_SIZE = 1254
+# Round-20: vocab grew from 1254 to 1265 after adding Tie_Start,
+# Tie_Stop, Dot_0/1/2, Tuplet_3/5/6/7/12, Chord_On tokens. The old
+# model checkpoint (output_layer = 1254) is incompatible with this
+# new vocab; training a fresh transformer is required.
+DEFAULT_VOCAB_SIZE = 1265
 DEFAULT_D_MODEL = 256
 DEFAULT_N_HEAD = 4
 DEFAULT_NUM_ENCODER_LAYERS = 2

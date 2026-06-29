@@ -19,7 +19,12 @@ from .constants import (
     PITCH_KEY,
     DURATION_KEY,
     INSTRUMENT_KEY,
-    TIME_SIGNATURE_KEY
+    TIME_SIGNATURE_KEY,
+    # Round-20: structural music token keys
+    TIE_KEY,
+    DOT_KEY,
+    TUPLET_KEY,
+    CHORD_KEY,
 )
 
 # Round-9: defaults for orphaned pitches (model emits pitch without
@@ -113,6 +118,21 @@ def _flush_note_buffer(note_buffer, instrument_map, measures, part_map,
         ET.SubElement(rest_note, 'voice').text = '1'
 
     note_el = ET.SubElement(meas, 'note')
+
+    # Round-20: <chord/> element if this note is a chord member
+    # (the position comes from the previous note, not this one's own Position token).
+    if note_buffer.get('is_chord_member'):
+        ET.SubElement(note_el, 'chord')
+
+    # Round-20: <tie type="start"/> or <tie type="stop"/> if the model
+    # emitted a Tie_Start/Tie_Stop token before/after this note.
+    tie_type = note_buffer.get('tie_type')
+    if tie_type in ('start', 'stop'):
+        notations = ET.SubElement(note_el, 'notations')
+        ET.SubElement(notations, 'tied', type=tie_type)
+        # MusicXML allows both <tie> (notation) and <tied> (sound); we
+        # emit <tied> which MuseScore 4 uses for both rendering and audio.
+
     pitch_val = note_buffer.get('pitch')
 
     if pitch_val in [None, 'Rest', 'None', '24EDO_Rest']:
@@ -147,6 +167,24 @@ def _flush_note_buffer(note_buffer, instrument_map, measures, part_map,
     dur_pos = DEFAULT_DURATION_BINS[idx]
     divisions = int(round(dur_pos * original_divisions / DEFAULT_POS_PER_QUARTER))
     ET.SubElement(note_el, 'duration').text = str(_quantize_duration(int(divisions)))
+
+    # Round-20: <dot/> elements for dotted notes (1 or 2).
+    # NOTE: MusicXML <dot/> modifies duration, but we already use the
+    # quantized standard duration for the raw <duration>. MuseScore 4
+    # accepts <dot/> as a notation-only modifier that doesn't change
+    # the ticks. We emit them anyway because they affect rendering
+    # (visual dot appears after the notehead).
+    dot_count = note_buffer.get('dot_count', 0)
+    for _ in range(dot_count):
+        ET.SubElement(note_el, 'dot')
+
+    # Round-20: <time-modification> for tuplets (3/2, 5/2, 7/2).
+    tuplet_num = note_buffer.get('tuplet_num', 1)
+    if tuplet_num > 1:
+        tm = ET.SubElement(note_el, 'time-modification')
+        ET.SubElement(tm, 'actual-notes').text = str(tuplet_num)
+        ET.SubElement(tm, 'normal-notes').text = '2'
+
     ET.SubElement(note_el, 'voice').text = '1'
 
     # NOTE: we cannot update `last_tick` from here because we don't
@@ -257,7 +295,10 @@ def reconstruct_musicxml_from_events(input_or_events, output_xml_path: str):
                                     # voice produces duplicate <voice>
                                     # elements when this branch fires
                                     # repeatedly for the same overflow.
-                                    if child.tag in ('duration', 'voice'):
+                                    # Round-20: also skip <notations> since
+                                    # a tie's start/stop should only be on
+                                    # ONE fragment, not both halves.
+                                    if child.tag in ('duration', 'voice', 'notations'):
                                         continue
                                     new_note.append(copy.deepcopy(child))
                                 ET.SubElement(new_note, 'duration').text = str(_quantize_duration(int(overflow)))
@@ -410,6 +451,37 @@ def reconstruct_musicxml_from_events(input_or_events, output_xml_path: str):
             elif ev.startswith(INSTRUMENT_KEY + "_"):
                 note_buffer['instrument'] = ev[len(INSTRUMENT_KEY)+1:]
 
+            # Round-20: structural token handlers. These set flags on
+            # note_buffer that _flush_note_buffer() reads when building
+            # the <note> XML element.
+            elif ev == CHORD_KEY + "_On":
+                # Chord member: this note shares start_tick with the
+                # PREVIOUS note. No Position token will be emitted for
+                # this note in the input stream.
+                note_buffer['is_chord_member'] = True
+
+            elif ev.startswith(TIE_KEY + "_"):
+                # Tie_Start = this note IS the start of a tied run
+                #   (gets <tie type="start"/> in XML)
+                # Tie_Stop = this note IS the end of a tied run
+                #   (gets <tie type="stop"/> in XML)
+                kind = ev[len(TIE_KEY)+1:].lower()  # "start" or "stop"
+                if kind in ('start', 'stop'):
+                    note_buffer['tie_type'] = kind
+
+            elif ev.startswith(DOT_KEY + "_"):
+                # Dot_1 / Dot_2 -> <dot/> child element(s).
+                dot_val = int(ev[len(DOT_KEY)+1:])
+                note_buffer['dot_count'] = max(dot_val, 0)
+
+            elif ev.startswith(TUPLET_KEY + "_"):
+                # Tuplet_3 / Tuplet_5 / Tuplet_7 -> <time-modification>.
+                # We only emit the actual-notes count; normal-notes is
+                # always 2 (the standard triplet/quintuplet/septuplet
+                # ratios).
+                tup_val = int(ev[len(TUPLET_KEY)+1:])
+                note_buffer['tuplet_num'] = max(tup_val, 1)
+
             if all(k in note_buffer for k in ('pitch', 'duration_idx', 'instrument')):
                 # Round-7: if no Bar_ token has been seen yet, start
                 # in measure 1 (1-indexed for MuseScore). This
@@ -512,7 +584,7 @@ def reconstruct_musicxml_from_events(input_or_events, output_xml_path: str):
                                 # in a later iteration. MusicXML allows at
                                 # most one <voice> per <note>.
                                 for c2 in child:
-                                    if c2.tag in ('duration', 'voice'):
+                                    if c2.tag in ('duration', 'voice', 'notations'):
                                         continue
                                     new_note.append(copy.deepcopy(c2))
                                 ET.SubElement(new_note, 'duration').text = str(_quantize_duration(int(overflow)))
