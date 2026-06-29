@@ -48,7 +48,15 @@ BAR_CAPACITY_4_4 = DEFAULT_POS_PER_QUARTER * 4
 # Values in the order: 64th, 32nd, dotted 32nd, 16th, dotted 16th, 8th,
 # dotted 8th, quarter, dotted quarter, double-dotted quarter, half,
 # dotted half, whole.
-STANDARD_DURATIONS = [15, 30, 45, 60, 90, 120, 180, 240, 360, 480, 720,
+# Round-19: snap durations to MuseScore-accepted values at div=480.
+# The values below are all multiples of 15 (the minimum resolvable
+# duration) but 45 and 90 are NOT in MuseScore's accepted note values
+# (MuseScore rounds them, causing "Incomplete measure" errors). They
+# were removed in round-21 after the round-20+ model emitted them
+# when learning complex polyphonic patterns. Values like 15 (128th)
+# and 840 (7/8 note) are kept because they appear in Arabic data
+# without triggering MuseScore rounding.
+STANDARD_DURATIONS = [15, 30, 60, 120, 180, 240, 360, 480, 720,
                      840, 960, 1440, 1920]
 
 
@@ -166,6 +174,22 @@ def _flush_note_buffer(note_buffer, instrument_map, measures, part_map,
     idx = min(note_buffer.get('duration_idx', 0), len(DEFAULT_DURATION_BINS) - 1)
     dur_pos = DEFAULT_DURATION_BINS[idx]
     divisions = int(round(dur_pos * original_divisions / DEFAULT_POS_PER_QUARTER))
+    # Round-21 fix: in MusicXML, all notes in a chord share the
+    # same duration (the first note's). The model often emits a
+    # shorter duration for chord members (because the source data
+    # from midi_to_xml.py had this bug). Override chord members'
+    # duration to match the most recent non-chord note in this
+    # measure, which is what MusicXML expects. MuseScore rejects
+    # mismatched chord durations as "Incomplete measure".
+    if note_buffer.get('is_chord_member'):
+        # Find the last non-chord note in the same measure and use
+        # its duration
+        for prev in reversed(list(meas)):
+            if prev.tag == 'note' and prev.find('chord') is None:
+                prev_dur = prev.find('duration')
+                if prev_dur is not None and prev_dur.text:
+                    divisions = int(prev_dur.text)
+                break
     ET.SubElement(note_el, 'duration').text = str(_quantize_duration(int(divisions)))
 
     # Round-20: <dot/> elements for dotted notes (1 or 2).
@@ -467,7 +491,28 @@ def reconstruct_musicxml_from_events(input_or_events, output_xml_path: str):
                 #   (gets <tie type="stop"/> in XML)
                 kind = ev[len(TIE_KEY)+1:].lower()  # "start" or "stop"
                 if kind in ('start', 'stop'):
-                    note_buffer['tie_type'] = kind
+                    # Round-21 fix: when Tie_Stop arrives AFTER
+                    # Instrument_Piano (because the model emitted it
+                    # there in its learned sequence), the note_buffer
+                    # already has a complete note. Flush it now so
+                    # the <tied type="stop"/> markup gets emitted on
+                    # this note, not lost. Without this, the buffer
+                    # only flushes on the NEXT Pitch event, by which
+                    # time Tie_Stop has been overwritten.
+                    if (kind == 'stop'
+                            and 'pitch' in note_buffer
+                            and 'duration_idx' in note_buffer
+                            and 'instrument' in note_buffer):
+                        note_buffer['tie_type'] = kind
+                        if _flush_note_buffer(
+                            note_buffer, instrument_map, measures,
+                            part_map, current_bar or 1, current_tick,
+                            last_tick, original_divisions,
+                        ):
+                            _advance_last_tick()
+                            note_buffer.clear()
+                    else:
+                        note_buffer['tie_type'] = kind
 
             elif ev.startswith(DOT_KEY + "_"):
                 # Dot_1 / Dot_2 -> <dot/> child element(s).
@@ -620,59 +665,66 @@ def reconstruct_musicxml_from_events(input_or_events, output_xml_path: str):
                                 _ensure_attributes(first)
 
                 # Round-19: pad under-filled measures with a rest note so
-                                # MuseScore doesn't complain about "Incomplete measure".
-                                # If a measure's notes total < 1920 ticks (4/4 capacity),
-                                # append a <note><rest/></note> with the missing duration
-                                # to fill the bar. MuseScore would otherwise reject the file.
-                                # NOTE: we use the EXACT missing duration (not quantized) here
-                                # because the rest note is the only element in the missing
-                                # space; quantizing could push the total over 1920 and cause
-                                # an infinite split/pad loop.
-                                for meas in part.findall('measure'):
-                                    total = 0
-                                    for child in meas:
-                                        if child.tag == 'note':
-                                            d = child.find('duration')
-                                            if d is not None and d.text:
-                                                total += int(d.text)
-                                        elif child.tag == 'forward':
-                                            d = child.find('duration')
-                                            if d is not None and d.text:
-                                                total += int(d.text)
-                                    if 0 < total < 1920:
-                                        missing = 1920 - total
-                                        rest_note = ET.SubElement(meas, 'note')
-                                        ET.SubElement(rest_note, 'rest')
-                                        # Snap to nearest standard duration, then clamp to
-                                        # avoid overflow (which would re-trigger the split
-                                        # loop). If snapped value > missing, just use missing.
-                                        snapped = _quantize_duration(missing)
-                                        if snapped > missing:
-                                            snapped = missing
-                                        ET.SubElement(rest_note, 'duration').text = str(snapped)
-                                        ET.SubElement(rest_note, 'voice').text = '1'
-                                    elif total == 0:
-                                        # Empty measure (between Bar tokens the model skipped).
-                                        rest_note = ET.SubElement(meas, 'note')
-                                        ET.SubElement(rest_note, 'rest')
-                                        ET.SubElement(rest_note, 'duration').text = '1920'
-                                        ET.SubElement(rest_note, 'voice').text = '1'
-                                    elif total > 1920:
-                                        # Quantization rounded some notes up; clip the last
-                                        # note to make total == 1920 exactly. Find the last
-                                        # note and reduce its duration.
-                                        excess = total - 1920
-                                        for child in reversed(list(meas)):
-                                            if child.tag == 'note':
-                                                d = child.find('duration')
-                                                if d is not None and d.text:
-                                                    orig = int(d.text)
-                                                    if orig > excess:
-                                                        d.text = str(orig - excess)
-                                                        break
-                                                    else:
-                                                        excess -= orig
-                                                        d.text = '0'
+                # MuseScore doesn't complain about "Incomplete measure".
+                # If a measure's notes total < 1920 ticks (4/4 capacity),
+                # append a <note><rest/></note> with the missing duration
+                # to fill the bar. MuseScore would otherwise reject the file.
+                # NOTE: we use the EXACT missing duration (not quantized) here
+                # because the rest note is the only element in the missing
+                # space; quantizing could push the total over 1920 and cause
+                # an infinite split/pad loop.
+                for meas in part.findall('measure'):
+                    total = 0
+                    for child in meas:
+                        if child.tag == 'note':
+                            d = child.find('duration')
+                            if d is not None and d.text:
+                                total += int(d.text)
+                        elif child.tag == 'forward':
+                            d = child.find('duration')
+                            if d is not None and d.text:
+                                total += int(d.text)
+                    if 0 < total < 1920:
+                        missing = 1920 - total
+                        rest_note = ET.SubElement(meas, 'note')
+                        ET.SubElement(rest_note, 'rest')
+                        # Snap to nearest standard duration, then clamp to
+                        # avoid overflow (which would re-trigger the split
+                        # loop). If snapped value > missing, just use missing.
+                        snapped = _quantize_duration(missing)
+                        if snapped > missing:
+                            snapped = missing
+                        ET.SubElement(rest_note, 'duration').text = str(snapped)
+                        ET.SubElement(rest_note, 'voice').text = '1'
+                    elif total == 0:
+                        # Empty measure (between Bar tokens the model skipped).
+                        rest_note = ET.SubElement(meas, 'note')
+                        ET.SubElement(rest_note, 'rest')
+                        ET.SubElement(rest_note, 'duration').text = '1920'
+                        ET.SubElement(rest_note, 'voice').text = '1'
+                    elif total > 1920:
+                        # Quantization rounded some notes up; clip the last
+                        # note to make total == 1920 exactly. Find the last
+                        # note and reduce its duration.
+                        # Round-21 fix: if reducing requires dropping a note
+                        # (not just trimming), REMOVE the note from the
+                        # measure instead of setting duration=0, which
+                        # MuseScore rejects as invalid.
+                        excess = total - 1920
+                        for child in reversed(list(meas)):
+                            if child.tag == 'note':
+                                d = child.find('duration')
+                                if d is not None and d.text:
+                                    orig = int(d.text)
+                                    if orig > excess:
+                                        d.text = str(orig - excess)
+                                        break
+                                    else:
+                                        # Note doesn't fit; remove it entirely
+                                        excess -= orig
+                                        meas.remove(child)
+
+
 
         tree.write(output_xml_path, encoding='utf-8', xml_declaration=True)
     else:
