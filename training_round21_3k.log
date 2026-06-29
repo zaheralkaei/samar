@@ -1,0 +1,113 @@
+/home/zaher/projects/samar/samar/models/samar_transformer.py:43: UserWarning: [DescriptionVocab] 107 overlapping strings have different IDs in SamarVocab vs DescriptionVocab (e.g. [('TimeSignature_1/2', 748, 1138), ('TimeSignature_2/2', 775, 1165), ('TimeSignature_3/2', 794, 1184), ('TimeSignature_4/2', 808, 1198), ('TimeSignature_5/2', 821, 1211)]). Cross-tokenizer use will mis-encode. This is by-design per FIGARO two-stream split, but be careful: always use SamarTokenizer for events and DescriptionTokenizer for descriptions.
+  desc_vocab_size = len(DescriptionVocab())
+/home/zaher/projects/samar/.venv/lib/python3.12/site-packages/torch/nn/modules/transformer.py:143: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.self_attn.batch_first was not True(use batch_first for better inference performance)
+  self.encoder = TransformerEncoder(
+[model] Total parameters: 5,344,241
+[trainer] Split 3000 samples into 2700 train / 300 val
+/home/zaher/projects/samar/samar/tokenizer.py:65: UserWarning: [DescriptionVocab] 107 overlapping strings have different IDs in SamarVocab vs DescriptionVocab (e.g. [('TimeSignature_1/2', 748, 1138), ('TimeSignature_2/2', 775, 1165), ('TimeSignature_3/2', 794, 1184), ('TimeSignature_4/2', 808, 1198), ('TimeSignature_5/2', 821, 1211)]). Cross-tokenizer use will mis-encode. This is by-design per FIGARO two-stream split, but be careful: always use SamarTokenizer for events and DescriptionTokenizer for descriptions.
+  self.vocab = vocab or DescriptionVocab()
+  [epoch 1 batch 10] loss=5.1592
+  [epoch 1 batch 20] loss=4.6799
+  [epoch 1 batch 30] loss=4.3297
+  [epoch 1 batch 40] loss=3.9057
+  [epoch 1 batch 50] loss=3.3712
+  [epoch 1 batch 60] loss=3.0511
+  [epoch 1 batch 70] loss=2.7182
+  [epoch 1 batch 80] loss=2.5488
+  [epoch 1 batch 90] loss=2.5320
+  [epoch 1 batch 100] loss=2.3928
+  [epoch 1 batch 110] loss=2.2950
+  [epoch 1 batch 120] loss=2.2397
+  [epoch 1 batch 130] loss=2.1707
+  [epoch 1 batch 140] loss=2.2495
+  [epoch 1 batch 150] loss=2.1543
+  [epoch 1 batch 160] loss=2.0798
+Epoch 1/5  train_loss=3.0729  val_loss=2.0026
+[trainer] New best val_loss=2.0026
+[trainer] Saved weights -> checkpoints/samar_transformer_r21_3k.pt
+[trainer] Saved config  -> checkpoints/samar_transformer_r21_3k_config.json
+[trainer] Saved best   -> checkpoints/samar_transformer_r21_3k_best.pt
+  [epoch 2 batch 10] loss=2.0665
+  [epoch 2 batch 20] loss=2.0158
+  [epoch 2 batch 30] loss=1.9776
+  [epoch 2 batch 40] loss=1.8745
+  [epoch 2 batch 50] loss=1.9724
+  [epoch 2 batch 60] loss=1.9965
+  [epoch 2 batch 70] loss=1.9493
+  [epoch 2 batch 80] loss=1.8680
+  [epoch 2 batch 90] loss=1.8559
+  [epoch 2 batch 100] loss=1.9864
+  [epoch 2 batch 110] loss=1.9495
+  [epoch 2 batch 120] loss=1.9935
+  [epoch 2 batch 130] loss=1.9167
+  [epoch 2 batch 140] loss=1.9753
+  [epoch 2 batch 150] loss=1.9264
+  [epoch 2 batch 160] loss=1.8989
+Epoch 2/5  train_loss=1.9415  val_loss=1.8621
+[trainer] New best val_loss=1.8621
+[trainer] Saved weights -> checkpoints/samar_transformer_r21_3k.pt
+[trainer] Saved config  -> checkpoints/samar_transformer_r21_3k_config.json
+[trainer] Saved best   -> checkpoints/samar_transformer_r21_3k_best.pt
+  [epoch 3 batch 10] loss=1.8512
+  [epoch 3 batch 20] loss=1.7436
+  [epoch 3 batch 30] loss=1.9065
+  [epoch 3 batch 40] loss=1.9077
+  [epoch 3 batch 50] loss=1.8514
+  [epoch 3 batch 60] loss=1.8889
+  [epoch 3 batch 70] loss=1.8658
+  [epoch 3 batch 80] loss=1.8989
+  [epoch 3 batch 90] loss=1.8044
+  [epoch 3 batch 100] loss=1.8610
+  [epoch 3 batch 110] loss=1.8477
+  [epoch 3 batch 120] loss=1.8023
+  [epoch 3 batch 130] loss=1.8480
+  [epoch 3 batch 140] loss=1.7942
+  [epoch 3 batch 150] loss=1.8715
+  [epoch 3 batch 160] loss=1.8156
+Epoch 3/5  train_loss=1.8559  val_loss=1.8026
+[trainer] New best val_loss=1.8026
+[trainer] Saved weights -> checkpoints/samar_transformer_r21_3k.pt
+[trainer] Saved config  -> checkpoints/samar_transformer_r21_3k_config.json
+[trainer] Saved best   -> checkpoints/samar_transformer_r21_3k_best.pt
+  [epoch 4 batch 10] loss=1.7770
+  [epoch 4 batch 20] loss=1.8585
+  [epoch 4 batch 30] loss=1.8195
+  [epoch 4 batch 40] loss=1.8623
+  [epoch 4 batch 50] loss=1.8369
+  [epoch 4 batch 60] loss=1.8080
+  [epoch 4 batch 70] loss=1.8978
+  [epoch 4 batch 80] loss=1.8506
+  [epoch 4 batch 90] loss=1.7707
+  [epoch 4 batch 100] loss=1.8455
+  [epoch 4 batch 110] loss=1.8307
+  [epoch 4 batch 120] loss=1.7617
+  [epoch 4 batch 130] loss=1.7234
+  [epoch 4 batch 140] loss=1.7131
+  [epoch 4 batch 150] loss=1.7927
+  [epoch 4 batch 160] loss=1.7460
+Epoch 4/5  train_loss=1.8014  val_loss=1.7546
+[trainer] New best val_loss=1.7546
+[trainer] Saved weights -> checkpoints/samar_transformer_r21_3k.pt
+[trainer] Saved config  -> checkpoints/samar_transformer_r21_3k_config.json
+[trainer] Saved best   -> checkpoints/samar_transformer_r21_3k_best.pt
+  [epoch 5 batch 10] loss=1.7862
+  [epoch 5 batch 20] loss=1.8351
+  [epoch 5 batch 30] loss=1.6791
+  [epoch 5 batch 40] loss=1.8305
+  [epoch 5 batch 50] loss=1.7977
+  [epoch 5 batch 60] loss=1.7697
+  [epoch 5 batch 70] loss=1.7808
+  [epoch 5 batch 80] loss=1.7563
+  [epoch 5 batch 90] loss=1.7985
+  [epoch 5 batch 100] loss=1.7212
+  [epoch 5 batch 110] loss=1.7296
+  [epoch 5 batch 120] loss=1.7636
+  [epoch 5 batch 130] loss=1.7498
+  [epoch 5 batch 140] loss=1.5973
+  [epoch 5 batch 150] loss=1.8552
+  [epoch 5 batch 160] loss=1.7430
+Epoch 5/5  train_loss=1.7581  val_loss=1.7189
+[trainer] New best val_loss=1.7189
+[trainer] Saved weights -> checkpoints/samar_transformer_r21_3k.pt
+[trainer] Saved config  -> checkpoints/samar_transformer_r21_3k_config.json
+[trainer] Saved best   -> checkpoints/samar_transformer_r21_3k_best.pt

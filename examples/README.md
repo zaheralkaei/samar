@@ -21,6 +21,8 @@ reconstructed MusicXML (.xml).
 | **round-20 v2 (15 epoch total)** | **01-05** | **round-20 (vocab 1265 with Tie/Dot/Tuplet/Chord tokens, val=1.3211)** | **28-55 notes, 2 ties, 6 dots, 4 tuplets, 1 chord** |
 | **round-20 v3 (25 epoch total, t=0.8)** | ~~01-05~~ | **superseded by t-sweep below** | old boring version, kept for comparison only |
 | **round-20 v3 sweep (t=0.9-1.1)** | **01-05** | **round-20 25-epoch, temp sweep** | **44-54 notes, 5 ties, 9 dots, 1 tuplet, 1 chord** |
+| **round-21 v3 (5 ep, 1.5k MIDI)** | ~~01-05~~ | **superseded by v6** | old version kept for comparison |
+| **round-21 v6 (5 ep, 3k MIDI)** | **01-05** | **round-21 5-epoch on 3000 samples (val=1.7189)** | **37-51 notes, 42 ties, 117 chord members** |
 
 ## Round 15 examples (latest)
 
@@ -610,3 +612,49 @@ Temperature observations across 60+ generations:
   - t=1.0: occasional degenerate 1-15 note outputs
   - t=1.1: more chaos, more features, but still mostly 40-50 notes
   - t=1.2-1.4: high variance, 2-49 notes
+
+## Round 21 examples (Western MIDI, polyphony + ties)
+
+Round-21 fixes the long-standing gap where MIDI conversion flattened
+polyphony to single notes. midi_to_xml.py now preserves:
+  - <chord/> for notes sharing the same start_tick
+  - <tied type="start"/>/<tied type="stop"/> for cross-barline notes
+  - Quantized durations to STANDARD_DURATIONS
+
+Re-precomputed latents on 12,378 samples (295 classical MIDI files)
+yield 422,374 structural tokens (133,148 ties + 289,226 chord members)
+vs 0 in round-18/19/20 MIDI latents.
+
+### Round 21 v6 (5 epoch, 3000-sample subset, val=1.7189)
+
+Trained 5 epochs on a random 3000-sample subset of midi_latents_v4.pt
+(full 12,378-sample training was too slow on CPU: ~5-6 hours per epoch).
+
+| # | Composer | Latent idx | Notes | Ties | Chords |
+|---|---|---|---|---|---|
+| 01 | Chopin | 100 | 48 | 11 | 21 |
+| 02 | Bach | 200 | 51 | 14 | 19 |
+| 03 | Mozart | 10 | 47 | 4 | 31 |
+| 04 | Liszt | 5 | 41 | 6 | 36 |
+| 05 | Brahms | 0 | 37 | 7 | 10 |
+
+Total: 42 ties, 117 chord members across 5 files. Compare to
+round-20 v3 (5 ties, 1 chord) -- round-21 produces 8x more ties
+and 100x more chords.
+
+`examples/04_r21v6_liszt_l5.xml` has the most chord members (36),
+`examples/02_r21v6_bach_l200.xml` has the most ties (14).
+All 5 PDFs were accepted by MuseScore 4 with no errors.
+
+Round-21 reconstructor fixes:
+  - Chord members now share the first note's duration (MusicXML
+    spec) instead of having their own -- was a MuseScore reject
+  - Overflow trim no longer leaves duration=0 notes -- uses
+    meas.remove() to drop excess notes cleanly
+  - Pad step indentation fixed -- under-filled measures now get
+    a rest of the missing duration
+
+The model still produces occasional chaotic output (multiple
+Position events in a row, etc.) at 5 epochs; more training
+would help, but 5 epochs is already producing valid 4/4 pieces
+with rich structural features.
