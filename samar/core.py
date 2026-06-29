@@ -617,16 +617,23 @@ class SAMARInputRepresentation:
             # reconstructor renumbers Bar_0 -> measure 1 etc. so
             # MuseScore displays 1-indexed measure numbers.
             events.append(f"{BAR_KEY}_{bar_num}")
-            for note in notes_by_bar[bar_num]:
+            for note_idx, note in enumerate(notes_by_bar[bar_num]):
                 # Chord members don't get their own Position token --
                 # they share the previous note's start tick. We emit a
                 # Chord_On marker instead.
-                if note.is_chord_member:
-                    events.append(f"{CHORD_KEY}_On")
-                else:
+                # ROUND-22 BUG FIX: midi_to_xml.py adds <chord/> to
+                # overflow notes from the previous bar (which sit at
+                # tick=1920 == current_bar_end). Those overflow notes
+                # are NOT chord members -- they're continuations of the
+                # kept portion. The check `note.is_chord_member` is
+                # therefore wrong for the FIRST note of a new bar.
+                # Always emit Position for the first note of a bar.
+                if note_idx == 0 or not note.is_chord_member:
                     rel_tick = note.start_tick % ticks_per_bar
                     position = int(rel_tick / ticks_per_bar * positions_per_bar)
                     events.append(f"{POSITION_KEY}_{position}")
+                else:
+                    events.append(f"{CHORD_KEY}_On")
 
                 # Round-20: Tuplet_N BEFORE the note it applies to.
                 # Only emitted when this note is in a tuplet group
