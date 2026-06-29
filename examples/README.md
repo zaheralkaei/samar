@@ -23,6 +23,7 @@ reconstructed MusicXML (.xml).
 | **round-20 v3 sweep (t=0.9-1.1)** | **01-05** | **round-20 25-epoch, temp sweep** | **44-54 notes, 5 ties, 9 dots, 1 tuplet, 1 chord** |
 | **round-21 v3 (5 ep, 1.5k MIDI)** | ~~01-05~~ | **superseded by v6** | old version kept for comparison |
 | **round-21 v6 (5 ep, 3k MIDI)** | **01-05** | **round-21 5-epoch on 3000 samples (val=1.7189)** | **37-51 notes, 42 ties, 117 chord members** |
+| **round-21 v7 (2 ep, 12k MIDI)** | **01-05** | **round-21 2-epoch on FULL 12,378 samples (val=1.6296)** | **45-59 notes, 39 ties, 88 chord members** |
 
 ## Round 15 examples (latest)
 

@@ -1,0 +1,187 @@
+/home/zaher/projects/samar/samar/models/samar_transformer.py:43: UserWarning: [DescriptionVocab] 107 overlapping strings have different IDs in SamarVocab vs DescriptionVocab (e.g. [('TimeSignature_1/2', 748, 1138), ('TimeSignature_2/2', 775, 1165), ('TimeSignature_3/2', 794, 1184), ('TimeSignature_4/2', 808, 1198), ('TimeSignature_5/2', 821, 1211)]). Cross-tokenizer use will mis-encode. This is by-design per FIGARO two-stream split, but be careful: always use SamarTokenizer for events and DescriptionTokenizer for descriptions.
+  desc_vocab_size = len(DescriptionVocab())
+/home/zaher/projects/samar/.venv/lib/python3.12/site-packages/torch/nn/modules/transformer.py:143: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.self_attn.batch_first was not True(use batch_first for better inference performance)
+  self.encoder = TransformerEncoder(
+[model] Total parameters: 5,344,241
+[SamarLatentDataset] Filtered 5 samples shorter than 16 tokens (12378 -> 12373 samples)
+[trainer] Split 12373 samples into 11136 train / 1237 val
+/home/zaher/projects/samar/samar/tokenizer.py:65: UserWarning: [DescriptionVocab] 107 overlapping strings have different IDs in SamarVocab vs DescriptionVocab (e.g. [('TimeSignature_1/2', 748, 1138), ('TimeSignature_2/2', 775, 1165), ('TimeSignature_3/2', 794, 1184), ('TimeSignature_4/2', 808, 1198), ('TimeSignature_5/2', 821, 1211)]). Cross-tokenizer use will mis-encode. This is by-design per FIGARO two-stream split, but be careful: always use SamarTokenizer for events and DescriptionTokenizer for descriptions.
+  self.vocab = vocab or DescriptionVocab()
+/home/zaher/projects/samar/samar/tokenizer.py:65: UserWarning: [DescriptionVocab] 107 overlapping strings have different IDs in SamarVocab vs DescriptionVocab (e.g. [('TimeSignature_1/2', 748, 1138), ('TimeSignature_2/2', 775, 1165), ('TimeSignature_3/2', 794, 1184), ('TimeSignature_4/2', 808, 1198), ('TimeSignature_5/2', 821, 1211)]). Cross-tokenizer use will mis-encode. This is by-design per FIGARO two-stream split, but be careful: always use SamarTokenizer for events and DescriptionTokenizer for descriptions.
+  self.vocab = vocab or DescriptionVocab()
+/home/zaher/projects/samar/samar/tokenizer.py:65: UserWarning: [DescriptionVocab] 107 overlapping strings have different IDs in SamarVocab vs DescriptionVocab (e.g. [('TimeSignature_1/2', 748, 1138), ('TimeSignature_2/2', 775, 1165), ('TimeSignature_3/2', 794, 1184), ('TimeSignature_4/2', 808, 1198), ('TimeSignature_5/2', 821, 1211)]). Cross-tokenizer use will mis-encode. This is by-design per FIGARO two-stream split, but be careful: always use SamarTokenizer for events and DescriptionTokenizer for descriptions.
+  self.vocab = vocab or DescriptionVocab()
+/home/zaher/projects/samar/samar/tokenizer.py:65: UserWarning: [DescriptionVocab] 107 overlapping strings have different IDs in SamarVocab vs DescriptionVocab (e.g. [('TimeSignature_1/2', 748, 1138), ('TimeSignature_2/2', 775, 1165), ('TimeSignature_3/2', 794, 1184), ('TimeSignature_4/2', 808, 1198), ('TimeSignature_5/2', 821, 1211)]). Cross-tokenizer use will mis-encode. This is by-design per FIGARO two-stream split, but be careful: always use SamarTokenizer for events and DescriptionTokenizer for descriptions.
+  self.vocab = vocab or DescriptionVocab()
+  [epoch 1 batch 10] loss=4.9621
+  [epoch 1 batch 20] loss=4.5739
+  [epoch 1 batch 30] loss=4.3067
+  [epoch 1 batch 40] loss=3.7755
+  [epoch 1 batch 50] loss=3.3585
+  [epoch 1 batch 60] loss=3.0216
+  [epoch 1 batch 70] loss=2.7234
+  [epoch 1 batch 80] loss=2.4127
+  [epoch 1 batch 90] loss=2.3469
+  [epoch 1 batch 100] loss=2.3399
+  [epoch 1 batch 110] loss=2.2759
+  [epoch 1 batch 120] loss=2.0997
+  [epoch 1 batch 130] loss=2.1589
+  [epoch 1 batch 140] loss=2.0878
+  [epoch 1 batch 150] loss=2.0511
+  [epoch 1 batch 160] loss=2.0639
+  [epoch 1 batch 170] loss=1.9850
+  [epoch 1 batch 180] loss=2.0567
+  [epoch 1 batch 190] loss=2.0268
+  [epoch 1 batch 200] loss=2.0065
+  [epoch 1 batch 210] loss=1.8585
+  [epoch 1 batch 220] loss=1.9926
+  [epoch 1 batch 230] loss=1.9670
+  [epoch 1 batch 240] loss=1.9409
+  [epoch 1 batch 250] loss=1.9401
+  [epoch 1 batch 260] loss=1.7996
+  [epoch 1 batch 270] loss=1.8179
+  [epoch 1 batch 280] loss=1.9048
+  [epoch 1 batch 290] loss=1.8922
+  [epoch 1 batch 300] loss=1.9173
+  [epoch 1 batch 310] loss=1.8683
+  [epoch 1 batch 320] loss=1.8445
+  [epoch 1 batch 330] loss=1.9666
+  [epoch 1 batch 340] loss=1.8609
+  [epoch 1 batch 350] loss=1.9191
+  [epoch 1 batch 360] loss=1.8558
+  [epoch 1 batch 370] loss=1.7997
+  [epoch 1 batch 380] loss=1.9083
+  [epoch 1 batch 390] loss=1.8917
+  [epoch 1 batch 400] loss=1.7988
+  [epoch 1 batch 410] loss=1.8584
+  [epoch 1 batch 420] loss=1.8498
+  [epoch 1 batch 430] loss=1.7821
+  [epoch 1 batch 440] loss=1.8353
+  [epoch 1 batch 450] loss=1.8282
+  [epoch 1 batch 460] loss=1.7644
+  [epoch 1 batch 470] loss=1.8525
+  [epoch 1 batch 480] loss=1.7994
+  [epoch 1 batch 490] loss=1.9042
+  [epoch 1 batch 500] loss=1.8269
+  [epoch 1 batch 510] loss=1.8518
+  [epoch 1 batch 520] loss=1.7896
+  [epoch 1 batch 530] loss=1.8416
+  [epoch 1 batch 540] loss=1.7685
+  [epoch 1 batch 550] loss=1.7629
+  [epoch 1 batch 560] loss=1.7814
+  [epoch 1 batch 570] loss=1.7969
+  [epoch 1 batch 580] loss=1.7450
+  [epoch 1 batch 590] loss=1.6932
+  [epoch 1 batch 600] loss=1.8507
+  [epoch 1 batch 610] loss=1.6678
+  [epoch 1 batch 620] loss=1.7905
+  [epoch 1 batch 630] loss=1.7318
+  [epoch 1 batch 640] loss=1.8783
+  [epoch 1 batch 650] loss=1.7694
+  [epoch 1 batch 660] loss=1.7383
+  [epoch 1 batch 670] loss=1.7691
+  [epoch 1 batch 680] loss=1.7499
+  [epoch 1 batch 690] loss=1.6930
+/home/zaher/projects/samar/samar/tokenizer.py:65: UserWarning: [DescriptionVocab] 107 overlapping strings have different IDs in SamarVocab vs DescriptionVocab (e.g. [('TimeSignature_1/2', 748, 1138), ('TimeSignature_2/2', 775, 1165), ('TimeSignature_3/2', 794, 1184), ('TimeSignature_4/2', 808, 1198), ('TimeSignature_5/2', 821, 1211)]). Cross-tokenizer use will mis-encode. This is by-design per FIGARO two-stream split, but be careful: always use SamarTokenizer for events and DescriptionTokenizer for descriptions.
+  self.vocab = vocab or DescriptionVocab()
+/home/zaher/projects/samar/samar/tokenizer.py:65: UserWarning: [DescriptionVocab] 107 overlapping strings have different IDs in SamarVocab vs DescriptionVocab (e.g. [('TimeSignature_1/2', 748, 1138), ('TimeSignature_2/2', 775, 1165), ('TimeSignature_3/2', 794, 1184), ('TimeSignature_4/2', 808, 1198), ('TimeSignature_5/2', 821, 1211)]). Cross-tokenizer use will mis-encode. This is by-design per FIGARO two-stream split, but be careful: always use SamarTokenizer for events and DescriptionTokenizer for descriptions.
+  self.vocab = vocab or DescriptionVocab()
+/home/zaher/projects/samar/samar/tokenizer.py:65: UserWarning: [DescriptionVocab] 107 overlapping strings have different IDs in SamarVocab vs DescriptionVocab (e.g. [('TimeSignature_1/2', 748, 1138), ('TimeSignature_2/2', 775, 1165), ('TimeSignature_3/2', 794, 1184), ('TimeSignature_4/2', 808, 1198), ('TimeSignature_5/2', 821, 1211)]). Cross-tokenizer use will mis-encode. This is by-design per FIGARO two-stream split, but be careful: always use SamarTokenizer for events and DescriptionTokenizer for descriptions.
+  self.vocab = vocab or DescriptionVocab()
+/home/zaher/projects/samar/samar/tokenizer.py:65: UserWarning: [DescriptionVocab] 107 overlapping strings have different IDs in SamarVocab vs DescriptionVocab (e.g. [('TimeSignature_1/2', 748, 1138), ('TimeSignature_2/2', 775, 1165), ('TimeSignature_3/2', 794, 1184), ('TimeSignature_4/2', 808, 1198), ('TimeSignature_5/2', 821, 1211)]). Cross-tokenizer use will mis-encode. This is by-design per FIGARO two-stream split, but be careful: always use SamarTokenizer for events and DescriptionTokenizer for descriptions.
+  self.vocab = vocab or DescriptionVocab()
+Epoch 1/2  train_loss=2.1226  val_loss=1.7332
+[trainer] New best val_loss=1.7332
+[trainer] Saved weights -> checkpoints/samar_transformer_r21_full.pt
+[trainer] Saved config  -> checkpoints/samar_transformer_r21_full_config.json
+[trainer] Saved best   -> checkpoints/samar_transformer_r21_full_best.pt
+/home/zaher/projects/samar/samar/tokenizer.py:65: UserWarning: [DescriptionVocab] 107 overlapping strings have different IDs in SamarVocab vs DescriptionVocab (e.g. [('TimeSignature_1/2', 748, 1138), ('TimeSignature_2/2', 775, 1165), ('TimeSignature_3/2', 794, 1184), ('TimeSignature_4/2', 808, 1198), ('TimeSignature_5/2', 821, 1211)]). Cross-tokenizer use will mis-encode. This is by-design per FIGARO two-stream split, but be careful: always use SamarTokenizer for events and DescriptionTokenizer for descriptions.
+  self.vocab = vocab or DescriptionVocab()
+/home/zaher/projects/samar/samar/tokenizer.py:65: UserWarning: [DescriptionVocab] 107 overlapping strings have different IDs in SamarVocab vs DescriptionVocab (e.g. [('TimeSignature_1/2', 748, 1138), ('TimeSignature_2/2', 775, 1165), ('TimeSignature_3/2', 794, 1184), ('TimeSignature_4/2', 808, 1198), ('TimeSignature_5/2', 821, 1211)]). Cross-tokenizer use will mis-encode. This is by-design per FIGARO two-stream split, but be careful: always use SamarTokenizer for events and DescriptionTokenizer for descriptions.
+  self.vocab = vocab or DescriptionVocab()
+/home/zaher/projects/samar/samar/tokenizer.py:65: UserWarning: [DescriptionVocab] 107 overlapping strings have different IDs in SamarVocab vs DescriptionVocab (e.g. [('TimeSignature_1/2', 748, 1138), ('TimeSignature_2/2', 775, 1165), ('TimeSignature_3/2', 794, 1184), ('TimeSignature_4/2', 808, 1198), ('TimeSignature_5/2', 821, 1211)]). Cross-tokenizer use will mis-encode. This is by-design per FIGARO two-stream split, but be careful: always use SamarTokenizer for events and DescriptionTokenizer for descriptions.
+  self.vocab = vocab or DescriptionVocab()
+/home/zaher/projects/samar/samar/tokenizer.py:65: UserWarning: [DescriptionVocab] 107 overlapping strings have different IDs in SamarVocab vs DescriptionVocab (e.g. [('TimeSignature_1/2', 748, 1138), ('TimeSignature_2/2', 775, 1165), ('TimeSignature_3/2', 794, 1184), ('TimeSignature_4/2', 808, 1198), ('TimeSignature_5/2', 821, 1211)]). Cross-tokenizer use will mis-encode. This is by-design per FIGARO two-stream split, but be careful: always use SamarTokenizer for events and DescriptionTokenizer for descriptions.
+  self.vocab = vocab or DescriptionVocab()
+  [epoch 2 batch 10] loss=1.8619
+  [epoch 2 batch 20] loss=1.7161
+  [epoch 2 batch 30] loss=1.7788
+  [epoch 2 batch 40] loss=1.7902
+  [epoch 2 batch 50] loss=1.7497
+  [epoch 2 batch 60] loss=1.6829
+  [epoch 2 batch 70] loss=1.7467
+  [epoch 2 batch 80] loss=1.7347
+  [epoch 2 batch 90] loss=1.7081
+  [epoch 2 batch 100] loss=1.7756
+  [epoch 2 batch 110] loss=1.6961
+  [epoch 2 batch 120] loss=1.6733
+  [epoch 2 batch 130] loss=1.7392
+  [epoch 2 batch 140] loss=1.8869
+  [epoch 2 batch 150] loss=1.7138
+  [epoch 2 batch 160] loss=1.7525
+  [epoch 2 batch 170] loss=1.7230
+  [epoch 2 batch 180] loss=1.7895
+  [epoch 2 batch 190] loss=1.7405
+  [epoch 2 batch 200] loss=1.6635
+  [epoch 2 batch 210] loss=1.6728
+  [epoch 2 batch 220] loss=1.6974
+  [epoch 2 batch 230] loss=1.6951
+  [epoch 2 batch 240] loss=1.6081
+  [epoch 2 batch 250] loss=1.6675
+  [epoch 2 batch 260] loss=1.7116
+  [epoch 2 batch 270] loss=1.7171
+  [epoch 2 batch 280] loss=1.7065
+  [epoch 2 batch 290] loss=1.7247
+  [epoch 2 batch 300] loss=1.6663
+  [epoch 2 batch 310] loss=1.7242
+  [epoch 2 batch 320] loss=1.7071
+  [epoch 2 batch 330] loss=1.7023
+  [epoch 2 batch 340] loss=1.7257
+  [epoch 2 batch 350] loss=1.6416
+  [epoch 2 batch 360] loss=1.7195
+  [epoch 2 batch 370] loss=1.6822
+  [epoch 2 batch 380] loss=1.6858
+  [epoch 2 batch 390] loss=1.6291
+  [epoch 2 batch 400] loss=1.6871
+  [epoch 2 batch 410] loss=1.6414
+  [epoch 2 batch 420] loss=1.6918
+  [epoch 2 batch 430] loss=1.7733
+  [epoch 2 batch 440] loss=1.7440
+  [epoch 2 batch 450] loss=1.7026
+  [epoch 2 batch 460] loss=1.7307
+  [epoch 2 batch 470] loss=1.5929
+  [epoch 2 batch 480] loss=1.6327
+  [epoch 2 batch 490] loss=1.6424
+  [epoch 2 batch 500] loss=1.6422
+  [epoch 2 batch 510] loss=1.7253
+  [epoch 2 batch 520] loss=1.6970
+  [epoch 2 batch 530] loss=1.6423
+  [epoch 2 batch 540] loss=1.6275
+  [epoch 2 batch 550] loss=1.6594
+  [epoch 2 batch 560] loss=1.5817
+  [epoch 2 batch 570] loss=1.5793
+  [epoch 2 batch 580] loss=1.6809
+  [epoch 2 batch 590] loss=1.6386
+  [epoch 2 batch 600] loss=1.6653
+  [epoch 2 batch 610] loss=1.6913
+  [epoch 2 batch 620] loss=1.7634
+  [epoch 2 batch 630] loss=1.6304
+  [epoch 2 batch 640] loss=1.6650
+  [epoch 2 batch 650] loss=1.6213
+  [epoch 2 batch 660] loss=1.6209
+  [epoch 2 batch 670] loss=1.6217
+  [epoch 2 batch 680] loss=1.7081
+  [epoch 2 batch 690] loss=1.6748
+/home/zaher/projects/samar/samar/tokenizer.py:65: UserWarning: [DescriptionVocab] 107 overlapping strings have different IDs in SamarVocab vs DescriptionVocab (e.g. [('TimeSignature_1/2', 748, 1138), ('TimeSignature_2/2', 775, 1165), ('TimeSignature_3/2', 794, 1184), ('TimeSignature_4/2', 808, 1198), ('TimeSignature_5/2', 821, 1211)]). Cross-tokenizer use will mis-encode. This is by-design per FIGARO two-stream split, but be careful: always use SamarTokenizer for events and DescriptionTokenizer for descriptions.
+  self.vocab = vocab or DescriptionVocab()
+/home/zaher/projects/samar/samar/tokenizer.py:65: UserWarning: [DescriptionVocab] 107 overlapping strings have different IDs in SamarVocab vs DescriptionVocab (e.g. [('TimeSignature_1/2', 748, 1138), ('TimeSignature_2/2', 775, 1165), ('TimeSignature_3/2', 794, 1184), ('TimeSignature_4/2', 808, 1198), ('TimeSignature_5/2', 821, 1211)]). Cross-tokenizer use will mis-encode. This is by-design per FIGARO two-stream split, but be careful: always use SamarTokenizer for events and DescriptionTokenizer for descriptions.
+  self.vocab = vocab or DescriptionVocab()
+/home/zaher/projects/samar/samar/tokenizer.py:65: UserWarning: [DescriptionVocab] 107 overlapping strings have different IDs in SamarVocab vs DescriptionVocab (e.g. [('TimeSignature_1/2', 748, 1138), ('TimeSignature_2/2', 775, 1165), ('TimeSignature_3/2', 794, 1184), ('TimeSignature_4/2', 808, 1198), ('TimeSignature_5/2', 821, 1211)]). Cross-tokenizer use will mis-encode. This is by-design per FIGARO two-stream split, but be careful: always use SamarTokenizer for events and DescriptionTokenizer for descriptions.
+  self.vocab = vocab or DescriptionVocab()
+/home/zaher/projects/samar/samar/tokenizer.py:65: UserWarning: [DescriptionVocab] 107 overlapping strings have different IDs in SamarVocab vs DescriptionVocab (e.g. [('TimeSignature_1/2', 748, 1138), ('TimeSignature_2/2', 775, 1165), ('TimeSignature_3/2', 794, 1184), ('TimeSignature_4/2', 808, 1198), ('TimeSignature_5/2', 821, 1211)]). Cross-tokenizer use will mis-encode. This is by-design per FIGARO two-stream split, but be careful: always use SamarTokenizer for events and DescriptionTokenizer for descriptions.
+  self.vocab = vocab or DescriptionVocab()
+Epoch 2/2  train_loss=1.6998  val_loss=1.6296
+[trainer] New best val_loss=1.6296
+[trainer] Saved weights -> checkpoints/samar_transformer_r21_full.pt
+[trainer] Saved config  -> checkpoints/samar_transformer_r21_full_config.json
+[trainer] Saved best   -> checkpoints/samar_transformer_r21_full_best.pt
