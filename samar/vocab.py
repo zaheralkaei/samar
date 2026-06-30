@@ -43,6 +43,8 @@ from .constants import (
     DOT_KEY,
     TUPLET_KEY,
     TUPLET_VALUES,
+    # Round-23: staff tokens for two-staff piano output
+    STAFF_KEY,
 )
 
 class Tokens:
@@ -103,6 +105,9 @@ class Tokens:
             dot_tokens = [f'{DOT_KEY}_0', f'{DOT_KEY}_1', f'{DOT_KEY}_2']
             tuplet_tokens = [f'{TUPLET_KEY}_{n}' for n in TUPLET_VALUES]
             chord_tokens = [f'{CHORD_KEY}_On']
+            # Round-23: Staff_1 (treble, right hand) and Staff_2 (bass,
+            # left hand) tokens for two-staff piano output.
+            staff_tokens = [f'{STAFF_KEY}_1', f'{STAFF_KEY}_2']
 
             return (
                 time_sig_tokens +
@@ -116,7 +121,8 @@ class Tokens:
                 tie_tokens +
                 dot_tokens +
                 tuplet_tokens +
-                chord_tokens
+                chord_tokens +
+                staff_tokens
             )
 
 class Vocab:

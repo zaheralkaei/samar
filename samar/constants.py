@@ -67,6 +67,15 @@ TIE_KEY = 'Tie'             # Tie_Start, Tie_Stop
 DOT_KEY = 'Dot'              # Dot_0 (plain), Dot_1 (dotted), Dot_2 (double-dotted)
 TUPLET_KEY = 'Tuplet'        # Tuplet_3, Tuplet_5, Tuplet_7 (normal-notes always 2)
 CHORD_KEY = 'Chord'          # Chord_On (non-first member of a chord group)
+# Round-23: Staff_1 (treble, pitch >= middle C) and Staff_2 (bass, pitch < middle C)
+# for piano two-staff output. The model learns which hand plays each note.
+STAFF_KEY = 'Staff'
+
+# Round-23: pitch threshold (MIDI) separating treble (right hand) from
+# bass (left hand). Middle C = 60. Notes with pitch >= 60 go on staff 1
+# (treble clef); notes with pitch < 60 go on staff 2 (bass clef).
+# Chord members inherit the staff of the first note in the chord.
+STAFF_TREBLE_PITCH_THRESHOLD = 60
 
 # Discrete values for the new tokens
 DOT_PLAIN = 0

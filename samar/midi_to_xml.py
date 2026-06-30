@@ -24,13 +24,16 @@ learned from non-MIDI sources (e.g. Arabic MuseScore export).
 import xml.etree.ElementTree as ET
 import pretty_midi
 from collections import defaultdict
-from .constants import DEFAULT_RESOLUTION
+from .constants import DEFAULT_RESOLUTION, STAFF_TREBLE_PITCH_THRESHOLD
 
 
 # Standard note values at div=480 (ticks per quarter).
 # Same set the round-19 reconstructor uses. We snap to these
 # so the round-20 tokenizer won't drop them as non-standard.
-STANDARD_DURATIONS = [30, 60, 120, 240, 480, 720, 960, 1440, 1920]
+# Round-21: removed 45 and 90 -- MuseScore rounds them, causing
+# "Incomplete measure" errors when the model emits them.
+STANDARD_DURATIONS = [15, 30, 60, 120, 180, 240, 360, 480, 720,
+                     840, 960, 1440, 1920]
 
 
 def _quantize_duration(d):
@@ -161,7 +164,10 @@ def midi_to_musicxml_root(midi_path):
             ET.SubElement(key, "fifths").text = "0"
 
         # Sort notes by start_tick; chord members inherit previous start
+        # Round-23: staff (treble=1, bass=2) based on MIDI pitch. Chord
+        # members inherit the staff of the first note in the chord group.
         prev_start = None
+        prev_staff = None
         for start_tick, midi_pitch, duration, velocity, flags in sorted(
             notes_by_bar[bar_num]
         ):
@@ -172,6 +178,13 @@ def midi_to_musicxml_root(midi_path):
             # the previous note in this measure (polyphony marker).
             if prev_start is not None and start_tick == prev_start:
                 ET.SubElement(note_el, "chord")
+                # Chord member: inherit staff from first note in chord
+                staff_num = prev_staff
+            else:
+                # New note: assign staff based on pitch (treble vs bass)
+                staff_num = 1 if midi_pitch >= STAFF_TREBLE_PITCH_THRESHOLD else 2
+            ET.SubElement(note_el, "staff").text = str(staff_num)
+            prev_staff = staff_num
             prev_start = start_tick
 
             # Round-21: <tie type="start"/> or <tie type="stop"/> based

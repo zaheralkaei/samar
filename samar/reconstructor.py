@@ -25,6 +25,7 @@ from .constants import (
     DOT_KEY,
     TUPLET_KEY,
     CHORD_KEY,
+    STAFF_KEY,
 )
 
 # Round-9: defaults for orphaned pitches (model emits pitch without
@@ -210,6 +211,12 @@ def _flush_note_buffer(note_buffer, instrument_map, measures, part_map,
         ET.SubElement(tm, 'normal-notes').text = '2'
 
     ET.SubElement(note_el, 'voice').text = '1'
+
+    # Round-23: <staff> element (1=treble, 2=bass) for two-staff piano
+    # output. Default to 1 (treble) if not set (older checkpoints).
+    staff_num = note_buffer.get('staff', 1)
+    if staff_num in (1, 2):
+        ET.SubElement(note_el, 'staff').text = str(staff_num)
 
     # NOTE: we cannot update `last_tick` from here because we don't
     # have a reference to it. The caller updates last_tick before
@@ -474,6 +481,18 @@ def reconstruct_musicxml_from_events(input_or_events, output_xml_path: str):
 
             elif ev.startswith(INSTRUMENT_KEY + "_"):
                 note_buffer['instrument'] = ev[len(INSTRUMENT_KEY)+1:]
+
+            # Round-23: Staff_N handler. The Staff_N event is emitted
+            # BEFORE the Pitch (or Chord_On) it applies to. Default to
+            # 1 (treble) when the event is missing (existing
+            # pre-round-23 checkpoints will fall back to staff 1).
+            elif ev.startswith(STAFF_KEY + "_"):
+                try:
+                    staff_num = int(ev[len(STAFF_KEY)+1:])
+                    if staff_num in (1, 2):
+                        note_buffer['staff'] = staff_num
+                except ValueError:
+                    pass
 
             # Round-20: structural token handlers. These set flags on
             # note_buffer that _flush_note_buffer() reads when building

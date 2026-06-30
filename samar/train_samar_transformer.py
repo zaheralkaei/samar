@@ -38,7 +38,7 @@ _REPO_ROOT = os.path.dirname(_PACKAGE_DIR)
 # Tie_Stop, Dot_0/1/2, Tuplet_3/5/6/7/12, Chord_On tokens. The old
 # model checkpoint (output_layer = 1254) is incompatible with this
 # new vocab; training a fresh transformer is required.
-DEFAULT_VOCAB_SIZE = 1265
+DEFAULT_VOCAB_SIZE = 1267  # +2 for round-23 Staff_1, Staff_2
 DEFAULT_D_MODEL = 256
 DEFAULT_N_HEAD = 4
 DEFAULT_NUM_ENCODER_LAYERS = 2

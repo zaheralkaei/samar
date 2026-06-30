@@ -45,6 +45,7 @@ from .constants import (
     DEFAULT_MEAN_PITCH_BINS,
     DEFAULT_MEAN_VELOCITY_BINS,
     DEFAULT_MEAN_DURATION_BINS,
+    STAFF_KEY,
     DEFAULT_VELOCITY_BINS,
     DEFAULT_RESOLUTION,
     DEFAULT_INSTRUMENT,  # fallback when <part-name> is missing
@@ -104,7 +105,7 @@ class SamarNote:
     def __init__(self, start_tick, step, alter, octave, duration, instrument,
                  velocity=64, is_rest=False,
                  is_tied_start=False, is_tied_stop=False,
-                 dot_count=0, tuplet_num=1, is_chord_member=False):
+                 dot_count=0, tuplet_num=1, is_chord_member=False, staff=1):
         self.start_tick = int(start_tick)
         self.step = step
         self.alter = float(alter) if alter is not None else 0.0
@@ -119,6 +120,7 @@ class SamarNote:
         self.dot_count = int(dot_count) if dot_count is not None else 0  # 0/1/2
         self.tuplet_num = int(tuplet_num) if tuplet_num else 1  # 3/5/7 (normal-notes=2)
         self.is_chord_member = bool(is_chord_member)  # <chord/> present
+        self.staff = int(staff) if staff is not None else 1  # 1=treble, 2=bass (round-23)
 
     def to_24edo_pitch(self):
         """Convert to 24-EDO pitch space (MIDI pitch * 2).
@@ -289,6 +291,20 @@ class MusicXMLParser:
                         tuplet_num = 12
                     # <chord/> — note starts at same tick as previous note
                     is_chord_member = note.find("chord") is not None
+                    # Round-23: <staff> element. Defaults to 1 (treble).
+                    # The round-23 midi_to_xml.py converter emits 1 for
+                    # pitch >= middle C, 2 for pitch < middle C. Chord
+                    # members inherit the staff of the first note.
+                    staff_el = note.find("staff")
+                    if staff_el is not None and staff_el.text is not None:
+                        try:
+                            staff_num = int(staff_el.text)
+                            if staff_num not in (1, 2):
+                                staff_num = 1
+                        except ValueError:
+                            staff_num = 1
+                    else:
+                        staff_num = 1
 
                     if rest:
                         notes.append(SamarNote(
@@ -299,6 +315,7 @@ class MusicXMLParser:
                             dot_count=dot_count,
                             tuplet_num=tuplet_num,
                             is_chord_member=is_chord_member,
+                            staff=staff_num,
                         ))
                     elif pitch is not None:
                         step = pitch.findtext("step", "C")
@@ -312,6 +329,7 @@ class MusicXMLParser:
                             dot_count=dot_count,
                             tuplet_num=tuplet_num,
                             is_chord_member=is_chord_member,
+                            staff=staff_num,
                         ))
 
                     current_tick += tick_duration
@@ -634,6 +652,15 @@ class SAMARInputRepresentation:
                     events.append(f"{POSITION_KEY}_{position}")
                 else:
                     events.append(f"{CHORD_KEY}_On")
+
+                # Round-23: Staff_N BEFORE the note it applies to.
+                # Only emitted when this is the first note of a chord
+                # group (chord members inherit the staff of the first
+                # note, so emitting Staff_N for each would be redundant).
+                # Defaults to Staff_1 (treble) if staff attribute is 1.
+                if note_idx == 0 or not note.is_chord_member:
+                    if note.staff in (1, 2):
+                        events.append(f"{STAFF_KEY}_{note.staff}")
 
                 # Round-20: Tuplet_N BEFORE the note it applies to.
                 # Only emitted when this note is in a tuplet group
