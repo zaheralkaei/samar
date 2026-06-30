@@ -88,11 +88,14 @@ def _ensure_attributes(measure):
     key = ET.SubElement(attrs, 'key')
     fifths = ET.SubElement(key, 'fifths')
     fifths.text = '0'
-    clef = ET.SubElement(attrs, 'clef')
-    sign = ET.SubElement(clef, 'sign')
-    sign.text = 'G'
-    line = ET.SubElement(clef, 'line')
-    line.text = '2'
+    # Round-23: emit TWO clefs for two-staff piano output.
+    # staff 1 (treble, G clef) + staff 2 (bass, F clef).
+    clef1 = ET.SubElement(attrs, 'clef')
+    ET.SubElement(clef1, 'sign').text = 'G'
+    ET.SubElement(clef1, 'line').text = '2'
+    clef2 = ET.SubElement(attrs, 'clef', number='2')
+    ET.SubElement(clef2, 'sign').text = 'F'
+    ET.SubElement(clef2, 'line').text = '4'
 
 
 def _flush_note_buffer(note_buffer, instrument_map, measures, part_map,
@@ -121,6 +124,11 @@ def _flush_note_buffer(note_buffer, instrument_map, measures, part_map,
         # MusicXML 4.0 spec: <forward> MUST be wrapped in <note>,
         # not a direct child of <measure>. Wrap as a rest note so
         # MuseScore and other strict parsers accept the file.
+        # Round-24: removed the per-staff rest here -- the post-processing
+        # pass at the end of the function handles per-staff padding
+        # by adding rests where each staff is under-filled. Adding
+        # rests here during the main loop causes double-padding
+        # (this rest + the post-processing rest).
         rest_note = ET.SubElement(meas, 'note')
         ET.SubElement(rest_note, 'rest')
         ET.SubElement(rest_note, 'duration').text = str(_quantize_duration(int(current_tick - last_tick)))
@@ -600,78 +608,112 @@ def reconstruct_musicxml_from_events(input_or_events, output_xml_path: str):
         # split any that overflow capacity (MuseScore rejects these as
         # corrupt). We iterate to a fixed point: each split might create
         # new overflowing measures that need to be split again.
+        # Round-24: per-staff overflow check. With two-staff piano output
+        # (round-23), a single measure can have 3840 ticks total (both
+        # staves at 1920 each). The original code only allowed up to 1920
+        # and would loop forever trying to split a measure that already
+        # has both staves correctly filled.
         for part in list(tree.iter('part')):
             # Iterate to fixed point: keep splitting until no overflows
             changed = True
             while changed:
                 changed = False
                 for meas in list(part.findall('measure')):
-                    total = 0
+                    # Compute per-staff totals. Only split a measure if
+                    # ANY staff exceeds 1920 ticks. (Two staves at 1920
+                    # each = 3840 total is CORRECT, not overflow.)
+                    totals_per_staff = {1: 0, 2: 0}
                     for child in meas:
                         if child.tag == 'note':
-                            total += int(child.find('duration').text)
+                            d = child.find('duration')
+                            if d is not None and d.text:
+                                dur = int(d.text)
+                                s = child.find('staff')
+                                if s is None:
+                                    totals_per_staff[1] += dur
+                                else:
+                                    sn = int(s.text) if s.text in ('1', '2') else 1
+                                    totals_per_staff[sn] += dur
                         elif child.tag == 'forward':
-                            total += int(child.find('duration').text)
-                    if total <= 1920:
+                            d = child.find('duration')
+                            if d is not None and d.text:
+                                totals_per_staff[1] += int(d.text)
+                    # Skip if no staff overflows
+                    if max(totals_per_staff.values()) <= 1920:
                         continue
-                    # Split: walk children, accumulate, start new measure
-                    # when would exceed capacity
+                    # Round-24: split per-staff. Walk children per staff,
+                    # accumulate that staff's ticks, and start a new measure
+                    # when the staff would exceed capacity. The original
+                    # code (round-10) summed all notes regardless of staff,
+                    # which mixed the two staves' timelines.
                     capacity = 1920
-                    current_total = 0
+                    # We do the split by walking the children twice: once
+                    # for staff 1 notes, once for staff 2 notes. This is
+                    # simpler than maintaining two accumulators in a single
+                    # pass.
+                    notes_staff1 = [c for c in list(meas) if c.tag == 'note' and (c.find('staff') is None or c.find('staff').text in ('1', None))]
+                    notes_staff2 = [c for c in list(meas) if c.tag == 'note' and c.find('staff') is not None and c.find('staff').text == '2']
+                    forwards = [c for c in list(meas) if c.tag == 'forward']
+                    # Build a sorted list of all children by staff for splitting
                     split_count = 0
-                    for child in list(meas):
-                        child_dur = 0
-                        if child.tag == 'note':
-                            child_dur = int(child.find('duration').text)
-                        elif child.tag == 'forward':
-                            child_dur = int(child.find('duration').text
-                            )
-                        # Even a single child > capacity should be
-                        # trimmed to fit and the overflow moved to next measure
-                        if child_dur > capacity:
-                            # Trim this child
-                            dur_el = child.find('duration')
-                            if dur_el is not None:
-                                dur_el.text = str(capacity)
-                            # Move overflow to new measure
-                            overflow = child_dur - capacity
-                            new_meas = ET.Element('measure',
-                                                  number=str(int(meas.get('number')) + 1 + split_count))
-                            split_count += 1
-                            new_note = ET.Element(child.tag)
-                            if child.tag == 'note':
-                                # Round-11 audit: skip <voice> when copying.
-                                # The original note already has <voice>
-                                # (added by _flush_note_buffer); appending
-                                # a second one produces malformed XML when
-                                # the same overflow fragment is split again
-                                # in a later iteration. MusicXML allows at
-                                # most one <voice> per <note>.
-                                for c2 in child:
-                                    if c2.tag in ('duration', 'voice', 'notations'):
-                                        continue
-                                    new_note.append(copy.deepcopy(c2))
-                                ET.SubElement(new_note, 'duration').text = str(_quantize_duration(int(overflow)))
-                                ET.SubElement(new_note, 'voice').text = '1'
-                            else:
-                                # forward
-                                ET.SubElement(new_note, 'duration').text = str(_quantize_duration(int(overflow)))
-                            new_meas.append(new_note)
-                            part.append(new_meas)
-                            current_total = capacity  # current is now full
-                            changed = True
+                    for sn, group in [(1, notes_staff1 + forwards), (2, notes_staff2)]:
+                        # forwards go to staff 1
+                        if sn == 2 and not notes_staff2:
                             continue
-                        if current_total + child_dur > capacity and current_total > 0:
-                            new_meas = ET.Element('measure',
-                                                  number=str(int(meas.get('number')) + 1 + split_count))
-                            split_count += 1
-                            meas.remove(child)
-                            new_meas.append(child)
-                            part.append(new_meas)
-                            current_total = child_dur
-                            changed = True
-                        else:
-                            current_total += child_dur
+                        if sn == 1 and not notes_staff1 and not forwards:
+                            continue
+                        current_total = 0
+                        # Process children in their original order WITHIN this staff
+                        for child in group:
+                            child_dur = 0
+                            if child.tag == 'note':
+                                d = child.find('duration')
+                                if d is not None and d.text:
+                                    child_dur = int(d.text)
+                            elif child.tag == 'forward':
+                                d = child.find('duration')
+                                if d is not None and d.text:
+                                    child_dur = int(d.text)
+                            # Even a single child > capacity should be
+                            # trimmed to fit and the overflow moved to next measure
+                            if child_dur > capacity:
+                                # Trim this child
+                                dur_el = child.find('duration')
+                                if dur_el is not None:
+                                    dur_el.text = str(capacity)
+                                # Move overflow to new measure
+                                overflow = child_dur - capacity
+                                new_meas = ET.Element('measure',
+                                                      number=str(int(meas.get('number')) + 1 + split_count))
+                                split_count += 1
+                                new_note = ET.Element(child.tag)
+                                if child.tag == 'note':
+                                    # Round-11 audit: skip <voice> when copying.
+                                    for c2 in child:
+                                        if c2.tag in ('duration', 'voice', 'notations'):
+                                            continue
+                                        new_note.append(copy.deepcopy(c2))
+                                    ET.SubElement(new_note, 'duration').text = str(_quantize_duration(int(overflow)))
+                                    ET.SubElement(new_note, 'voice').text = '1'
+                                else:
+                                    # forward
+                                    ET.SubElement(new_note, 'duration').text = str(_quantize_duration(int(overflow)))
+                                new_meas.append(new_note)
+                                part.append(new_meas)
+                                current_total = capacity
+                                changed = True
+                                continue
+                            if current_total + child_dur > capacity and current_total > 0:
+                                new_meas = ET.Element('measure',
+                                                      number=str(int(meas.get('number')) + 1 + split_count))
+                                split_count += 1
+                                meas.remove(child)
+                                new_meas.append(child)
+                                part.append(new_meas)
+                                current_total = child_dur
+                                changed = True
+                            else:
+                                current_total += child_dur
                     # Renumber all measures in this part sequentially
                     if split_count > 0:
                         all_measures_in_part = part.findall('measure')
@@ -692,56 +734,91 @@ def reconstruct_musicxml_from_events(input_or_events, output_xml_path: str):
                 # because the rest note is the only element in the missing
                 # space; quantizing could push the total over 1920 and cause
                 # an infinite split/pad loop.
+                # Round-24: per-staff padding. With two-staff piano output
+                # (round-23), each staff is its own timeline, so we need to
+                # pad each staff independently to 1920 ticks. The original
+                # code summed ALL notes regardless of staff, which under-padded
+                # the slower staff and caused MuseScore "Incomplete measure"
+                # errors on the under-filled staff.
                 for meas in part.findall('measure'):
-                    total = 0
+                    # Per-staff total
+                    totals_per_staff = {1: 0, 2: 0}
                     for child in meas:
                         if child.tag == 'note':
                             d = child.find('duration')
                             if d is not None and d.text:
-                                total += int(d.text)
+                                dur = int(d.text)
+                                s = child.find('staff')
+                                if s is None:
+                                    # Backward compat: notes without staff
+                                    # default to staff 1
+                                    totals_per_staff[1] += dur
+                                else:
+                                    sn = int(s.text) if s.text in ('1', '2') else 1
+                                    totals_per_staff[sn] += dur
                         elif child.tag == 'forward':
                             d = child.find('duration')
                             if d is not None and d.text:
-                                total += int(d.text)
-                    if 0 < total < 1920:
-                        missing = 1920 - total
-                        rest_note = ET.SubElement(meas, 'note')
-                        ET.SubElement(rest_note, 'rest')
-                        # Snap to nearest standard duration, then clamp to
-                        # avoid overflow (which would re-trigger the split
-                        # loop). If snapped value > missing, just use missing.
-                        snapped = _quantize_duration(missing)
-                        if snapped > missing:
-                            snapped = missing
-                        ET.SubElement(rest_note, 'duration').text = str(snapped)
-                        ET.SubElement(rest_note, 'voice').text = '1'
-                    elif total == 0:
-                        # Empty measure (between Bar tokens the model skipped).
-                        rest_note = ET.SubElement(meas, 'note')
-                        ET.SubElement(rest_note, 'rest')
-                        ET.SubElement(rest_note, 'duration').text = '1920'
-                        ET.SubElement(rest_note, 'voice').text = '1'
-                    elif total > 1920:
-                        # Quantization rounded some notes up; clip the last
-                        # note to make total == 1920 exactly. Find the last
-                        # note and reduce its duration.
-                        # Round-21 fix: if reducing requires dropping a note
-                        # (not just trimming), REMOVE the note from the
-                        # measure instead of setting duration=0, which
-                        # MuseScore rejects as invalid.
-                        excess = total - 1920
-                        for child in reversed(list(meas)):
-                            if child.tag == 'note':
-                                d = child.find('duration')
-                                if d is not None and d.text:
-                                    orig = int(d.text)
-                                    if orig > excess:
-                                        d.text = str(orig - excess)
-                                        break
-                                    else:
-                                        # Note doesn't fit; remove it entirely
-                                        excess -= orig
-                                        meas.remove(child)
+                                # Forward elements don't have a staff;
+                                # default to staff 1 for backward compat
+                                totals_per_staff[1] += int(d.text)
+                    for sn in (1, 2):
+                        total = totals_per_staff[sn]
+                        if 0 < total < 1920:
+                            missing = 1920 - total
+                            rest_note = ET.SubElement(meas, 'note')
+                            ET.SubElement(rest_note, 'rest')
+                            # Snap to nearest standard duration, then clamp to
+                            # avoid overflow (which would re-trigger the split
+                            # loop). If snapped value > missing, just use missing.
+                            snapped = _quantize_duration(missing)
+                            if snapped > missing:
+                                snapped = missing
+                            ET.SubElement(rest_note, 'duration').text = str(snapped)
+                            ET.SubElement(rest_note, 'voice').text = '1'
+                            # Round-23: rest needs <staff> in two-staff output
+                            ET.SubElement(rest_note, 'staff').text = str(sn)
+                        elif total == 0:
+                            # Empty staff (between Bar tokens the model skipped).
+                            # Only add the full-bar rest on staff 1 (avoid
+                            # adding two full-bar rests when neither staff has
+                            # any notes -- MuseScore renders two empty bars).
+                            if sn == 1:
+                                rest_note = ET.SubElement(meas, 'note')
+                                ET.SubElement(rest_note, 'rest')
+                                ET.SubElement(rest_note, 'duration').text = '1920'
+                                ET.SubElement(rest_note, 'voice').text = '1'
+                                ET.SubElement(rest_note, 'staff').text = '1'
+                        elif total > 1920:
+                            # Quantization rounded some notes up; clip the last
+                            # note on THIS staff to make the staff total == 1920
+                            # exactly. Find the last note on this staff and
+                            # reduce its duration.
+                            # Round-24: search for the last note on the target
+                            # staff (round-23 fix, the original code picked
+                            # the last note in document order, which could be
+                            # the wrong staff).
+                            # Round-21 fix: if reducing requires dropping a
+                            # note (not just trimming), REMOVE the note from
+                            # the measure instead of setting duration=0, which
+                            # MuseScore rejects as invalid.
+                            excess = total - 1920
+                            for child in reversed(list(meas)):
+                                if child.tag == 'note':
+                                    s = child.find('staff')
+                                    csn = int(s.text) if (s is not None and s.text in ('1', '2')) else 1
+                                    if csn != sn:
+                                        continue
+                                    d = child.find('duration')
+                                    if d is not None and d.text:
+                                        orig = int(d.text)
+                                        if orig > excess:
+                                            d.text = str(orig - excess)
+                                            break
+                                        else:
+                                            # Note doesn't fit; remove it entirely
+                                            excess -= orig
+                                            meas.remove(child)
 
 
 
