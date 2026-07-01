@@ -28,6 +28,7 @@ reconstructed MusicXML (.xml).
 | **round-22 v5 (5 ep, 12k MIDI, chord-bugfix)** | **01-05** | **round-22 5-epoch on FIXED full 12,378 samples (val=1.5151)** | **42-55 notes, 49 ties, 88 chord members, 87% MuseScore-valid, real 2-10 note chords** |
 | **round-23 v6 (5 ep, 12k MIDI, two-staff piano)** | **01-05** | **round-23 5-epoch on full 12,378 samples with Staff_1/Staff_2 tokens (val=1.4144)** | **9-36 notes, 13 ties, 74 chord members, 40% MuseScore-valid, two-staff output (treble+bass)** |
 | **round-24 v5 (5 ep, 12k MIDI, reconstructor overflow fix)** | **01-05** | **round-24 per-staff overflow tracking on round-23 model output** | **44-57 notes, 39 ties, 87 chord members, 33% MuseScore-valid, two-staff output, no infinite loops** |
+| **round-25 v6 (10 ep, 12k MIDI, resumed from r23)** | **01-05** | **round-25 10-epoch resumed from r23_v6_best.pt with LR=5e-5 (val=1.3095)** | **27-81 notes, 32 ties, 80 chord members, 33% MuseScore-valid, two-staff output, 7.4% better than r23** |
 
 ## Round 15 examples (latest)
 
